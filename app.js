@@ -318,11 +318,11 @@
   function webShell(d) {
     return '<div class="web"><header class="w-mast"><div class="title"><span class="m"></span>The Bling Ledger</div>' +
       '<div class="edition">Personal Edition · ' + esc(d.generatedAt) + ' · No. 09</div></header>' +
-      '<div class="w-navbar"><nav>' + ["overview", "spend", "invest", "predict"].map(function (b) {
-        return '<a class="' + (state.wboard === b ? "on" : "") + '" data-wgo="' + b + '">' + b.charAt(0).toUpperCase() + b.slice(1) + '</a>';
-      }).join("") + '</nav><div style="display:flex;align-items:center;gap:16px"><span class="ribbon"><span class="d"></span>Updated 3h ago · reconnect</span>' +
+      '<div class="w-navbar"><nav>' + [["overview", "Overview"], ["spend", "Spend"], ["invest", "Invest"], ["predict", "Predict"], ["you", "Account"]].map(function (b) {
+        return '<a class="' + (state.wboard === b[0] ? "on" : "") + '" data-wgo="' + b[0] + '">' + b[1] + '</a>';
+      }).join("") + '</nav><div style="display:flex;align-items:center;gap:16px">' + (d.stale ? '<span class="ribbon"><span class="d"></span>' + esc(d.stale) + '</span>' : "") +
       '<button class="ttoggle" data-act="theme" aria-label="Toggle theme">' + icon("moon") + '</button></div></div>' +
-      wbOverview(d) + wbSpend(d) + wbInvest(d) + wbPredict(d) + '</div>';
+      wbOverview(d) + wbSpend(d) + wbInvest(d) + wbPredict(d) + wbYou(d) + '</div>';
   }
   function ansWeb(t, s, k, cls) { return '<div class="ans-web"><div><div class="t">' + esc(t) + '</div>' + (s ? '<div class="s">' + esc(s) + '</div>' : "") + '</div><div class="k num ' + (cls || "") + '">' + esc(k) + '</div></div>'; }
   function wbOverview(d) {
@@ -373,6 +373,27 @@
       '<div class="w-call"><span class="tab" style="color:var(--ink)">Debt-free countdown</span><div class="big num">' + d.answers.debtFree + '</div><div class="s" style="font-size:11.5px;color:var(--ink-soft)">52 months · +₹5k/mo prepay saves 8 months</div></div></div>' +
       '<div class="w-col last"><div class="colhead">Coming up · 30 days <span class="more">All</span></div><div class="w-tbl">' + d.upcoming.map(function (u) { return '<div class="tr"><span class="dt num">' + esc(u.date) + '</span><span class="nm">' + esc(u.name) + '</span><span class="amt neg num">−' + inr(Math.abs(u.amt)) + '</span></div>'; }).join("") + '</div></div>' +
       '</div></div>';
+  }
+
+  function wbYou(d) {
+    var c = state.connection, connected = c.endpoint && c.token;
+    var sync = d.sync.map(function (s) {
+      return '<div class="ans-web"><div><div class="t">' + esc(s.name) + '</div><div class="s">' + esc(s.sub) + '</div></div><div class="k num ' + (s.cls || "") + '" style="font-size:13px">' + esc(s.st) + '</div></div>';
+    }).join("");
+    return '<div class="wboard' + (state.wboard === "you" ? " on" : "") + '" data-b="you"><div class="w-grid" style="grid-template-columns:1.2fr 1fr">' +
+      '<div class="w-col lead"><div class="colhead">Your Sheet <span class="more">' + (connected ? "Connected" : "Demo data") + '</span></div>' +
+      '<p style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin-bottom:8px">Paste your Apps Script Web App URL and device token. They stay on this device; Bling never sees your Google password.</p>' +
+      '<form data-form="conn">' +
+      '<label class="field"><span>Apps Script URL</span><input name="endpoint" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" value="' + esc(c.endpoint) + '"></label>' +
+      '<label class="field"><span>Device token</span><input name="token" type="password" placeholder="fos_••••••••" value="' + esc(c.token) + '"></label>' +
+      '<button class="btn" type="submit">' + (connected ? "Update connection" : "Connect") + '</button>' +
+      (connected ? ' <button class="btn ghost" type="button" data-act="disconnect">Disconnect</button>' : "") +
+      '</form></div>' +
+      '<div class="w-col"><div class="colhead">Sync health</div>' + sync +
+      '<div class="colhead" style="margin-top:22px">Appearance</div>' +
+      '<div style="display:flex;gap:22px"><button class="' + (state.theme === "light" ? "on" : "") + '" data-theme-set="light" style="padding:6px 0;font-size:13px;font-weight:600;' + (state.theme === "light" ? "border-bottom:2px solid var(--accent)" : "color:var(--ink-soft)") + '">Paper</button>' +
+      '<button class="' + (state.theme === "dark" ? "on" : "") + '" data-theme-set="dark" style="padding:6px 0;font-size:13px;font-weight:600;' + (state.theme === "dark" ? "border-bottom:2px solid var(--accent)" : "color:var(--ink-soft)") + '">Charcoal</button></div>' +
+      '</div></div></div>';
   }
 
   /* ---------- icons ---------- */

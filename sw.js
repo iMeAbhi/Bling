@@ -1,5 +1,6 @@
-/* Bling service worker — cache-first app shell, network for everything else. */
-const CACHE = "bling-v2";
+/* Bling service worker — network-first so code updates always land; cache is
+   only a fallback when offline. */
+const CACHE = "bling-v3";
 const SHELL = [
   "./",
   "./index.html",
@@ -31,13 +32,14 @@ self.addEventListener("fetch", (e) => {
     e.respondWith(fetch(req).catch(() => caches.match("./index.html")));
     return;
   }
+  // Network-first for same-origin assets: always try fresh, fall back to cache offline.
   e.respondWith(
-    caches.match(req).then((hit) => hit || fetch(req).then((res) => {
+    fetch(req).then((res) => {
       if (res.ok && url.origin === self.location.origin) {
         const clone = res.clone();
         caches.open(CACHE).then((c) => c.put(req, clone));
       }
       return res;
-    }).catch(() => hit))
+    }).catch(() => caches.match(req))
   );
 });
