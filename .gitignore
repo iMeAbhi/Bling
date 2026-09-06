@@ -1,0 +1,7 @@
+# Planning docs — kept local, not published
+FinanceOS-PRD.md
+BLING.md
+design-system/
+mockup/
+backend/**/credentials*
+*.log
