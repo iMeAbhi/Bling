@@ -24,6 +24,7 @@ var TABLES = {
   Accounts: ["id", "name", "institution", "type", "last4", "opening_balance", "balance", "limit", "active", "updated_at"],
   Transactions: ["id", "date", "merchant", "note", "category", "amount", "account_id", "kind", "source", "status", "source_event_id", "created_at", "updated_at", "deleted_at"],
   Budgets: ["id", "name", "cap", "group", "created_at", "updated_at"],
+  CategoryRules: ["id", "keywords", "category", "priority", "active", "updated_at"],
   Recurring: ["id", "name", "category", "amount", "account_id", "due_day", "cadence", "status", "tolerance_pct", "settled_month", "active", "updated_at"],
   ParserRules: ["id", "bank", "source", "sender_pattern", "subject_pattern", "body_regex", "field_map_json", "direction", "enabled", "quarantined", "version", "updated_at"],
   IngestEvents: ["id", "source", "source_event_id", "received_at", "raw_hash", "parser_rule_id", "status", "transaction_id", "dedup_of", "error", "excerpt"],
@@ -44,6 +45,8 @@ function onOpen() {
     .addSeparator()
     .addItem("Install 15-min Gmail sync", "installGmailSync")
     .addItem("Sync Gmail now", "syncGmailAlerts")
+    .addSeparator()
+    .addItem("Auto-categorise transactions", "autoCategorize")
     .addSeparator()
     .addItem("Seed demo data", "seedDemo")
     .addItem("Recalculate balances", "recalcBalances")
@@ -67,6 +70,7 @@ function setupBling() {
     if (!getConfig_("sms_webhook_token")) setConfig_("sms_webhook_token", "sms_" + Utilities.getUuid().replace(/-/g, "").slice(0, 24));
     if (!getConfig_("fuzzy_minutes")) setConfig_("fuzzy_minutes", "10");
     seedParserTemplates_();
+    seedCategoryRules_();
     ss.toast("Bling is set up. Run createDeviceToken() next.", "Bling", 6);
   } finally {
     lock.releaseLock();
@@ -123,6 +127,7 @@ function doPost(e) {
         case "settle_recurring": return json_({ ok: true, data: settleRecurring_(payload.id) });
         case "confirm_transaction": return json_({ ok: true, data: confirmTransaction_(payload.id) });
         case "scan_gmail": return json_({ ok: true, data: syncGmailAlerts_() });
+        case "auto_categorize": return json_({ ok: true, data: autoCategorize_() });
         default: throw new Error("Unknown action: " + action);
       }
     } finally {
@@ -139,6 +144,11 @@ function buildSnapshot_() {
   var txns = readObjects_("Transactions").filter(function (t) { return !t.deleted_at; });
   var budgets = readObjects_("Budgets");
   var recurring = readObjects_("Recurring").filter(function (r) { return truthy_(r.active); });
+
+  // resolve category at read-time via keyword rules (so budgets/patterns work
+  // even before a write-back pass); does not touch the sheet.
+  var catRules = readObjects_("CategoryRules");
+  txns.forEach(function (t) { t.category = effectiveCat_(t, catRules); });
 
   var liquid = 0, invested = 0, owed = 0;
   var allocMap = {};
@@ -227,6 +237,7 @@ function buildSnapshot_() {
     week: { total: 0, vs: 0, days: [0, 0, 0, 0, 0, 0, 0], labels: ["M", "T", "W", "T", "F", "S", "S"], note: "" },
     month: { spent: monthSpent, budget: budget, left: Math.max(0, budget - monthSpent), daysLeft: daysLeft, projected: projected, avgDay: dayOfMonth ? Math.round(monthSpent / dayOfMonth) : 0, cats: cats, alert: overCapAlert_(cats) },
     year: yearSummary_(txns, tz),
+    caps: budgets.map(function (b) { return { name: String(b.name), cap: num_(b.cap) }; }),
     fixed: fixed,
     detects: detectPatterns_(txns, recurring, accounts, tz),
     suggest: suggestBudgets_(txns, budgets, tz),
@@ -443,7 +454,8 @@ function stageTransaction_(p, source, ruleId, raw) {
     appendObject_("IngestEvents", { id: evId, source: source, source_event_id: p.sourceEventId, received_at: nowIso_(), raw_hash: dedupHash_(p), parser_rule_id: ruleId || "", status: "duplicate", transaction_id: dupId, dedup_of: dupId, error: "", excerpt: redact_(raw) });
     return { id: dupId, duplicate: true };
   }
-  var txn = upsertTransaction_({ date: p.date, merchant: p.merchant, category: p.category, amount: p.amount, accountId: p.accountId, source: source, status: "needs_review", sourceEventId: p.sourceEventId });
+  var cat = effectiveCat_({ category: p.category, merchant: p.merchant, note: "" }, readObjects_("CategoryRules"));
+  var txn = upsertTransaction_({ date: p.date, merchant: p.merchant, category: cat, amount: p.amount, accountId: p.accountId, source: source, status: "needs_review", sourceEventId: p.sourceEventId });
   fingerprintTag_(txn);
   appendObject_("IngestEvents", { id: evId, source: source, source_event_id: p.sourceEventId, received_at: nowIso_(), raw_hash: dedupHash_(p), parser_rule_id: ruleId || "", status: "staged", transaction_id: txn.id, dedup_of: "", error: "", excerpt: redact_(raw) });
   return { id: txn.id, duplicate: false };
@@ -514,6 +526,63 @@ function seedParserTemplates_() {
     { id: "pr_hdfc_sms", bank: "HDFC (SMS) — edit & enable", source: "sms", sender_pattern: "HDFC", subject_pattern: "", body_regex: "(?:Rs\\.?|INR)\\s*([0-9,]+(?:\\.[0-9]{1,2})?).*?(?:at|to)\\s+([^.]+?)\\b.*?(?:card|a/?c)\\s*(?:xx|\\*+)?([0-9]{4})", field_map_json: JSON.stringify({ amount: 1, merchant: 2, last4: 3, category: "Uncategorized" }), direction: "debit", enabled: false, quarantined: false, version: 1, updated_at: now },
     { id: "pr_generic_gmail", bank: "Generic bank alert (Gmail) — edit & enable", source: "gmail", sender_pattern: "alerts@|@.*bank", subject_pattern: "debit|spent|transaction", body_regex: "(?:Rs\\.?|INR|₹)\\s*([0-9,]+(?:\\.[0-9]{1,2})?).*?(?:at|to)\\s+([^\\n.]+).*?(?:ending|card|a/?c)[^0-9]*([0-9]{4})", field_map_json: JSON.stringify({ amount: 1, merchant: 2, last4: 3, category: "Uncategorized" }), direction: "debit", enabled: false, quarantined: false, version: 1, updated_at: now }
   ].forEach(function (t) { if (!findObject_("ParserRules", "id", t.id)) appendObject_("ParserRules", t); });
+}
+/* =================================================================
+   Keyword auto-categorisation
+   ================================================================= */
+function effectiveCat_(t, rules) {
+  var c = String(t.category || "");
+  if (c && c.toLowerCase() !== "uncategorized") return c;               // keep manual/known categories
+  var hay = ((t.merchant || "") + " " + (t.note || "")).toLowerCase();
+  var best = null;
+  for (var i = 0; i < rules.length; i++) {
+    if (!truthy_(rules[i].active)) continue;
+    var kws = String(rules[i].keywords || "").toLowerCase().split(",");
+    for (var j = 0; j < kws.length; j++) {
+      var k = kws[j].trim();
+      if (k && hay.indexOf(k) !== -1) {
+        if (!best || num_(rules[i].priority) > num_(best.priority)) best = rules[i];
+        break;
+      }
+    }
+  }
+  return best ? String(best.category) : (c || "Uncategorized");
+}
+function seedCategoryRules_() {
+  var now = nowIso_();
+  [
+    { id: "cat_food", keywords: "zomato,swiggy,mcdonald,dominos,kfc,starbucks,chaayos,chai point,eatfit,faasos,box8", category: "Eating out", priority: 10, active: true, updated_at: now },
+    { id: "cat_groc", keywords: "blinkit,zepto,bigbasket,grofers,dmart,jiomart,instamart,dunzo,milk,kirana", category: "Groceries", priority: 10, active: true, updated_at: now },
+    { id: "cat_trans", keywords: "rapido,uber,ola,irctc,redbus,namma,metro,petrol,fuel,indian oil,hpcl,bpcl,fastag", category: "Transport", priority: 10, active: true, updated_at: now },
+    { id: "cat_shop", keywords: "amazon,flipkart,myntra,ajio,nykaa,meesho,tatacliq,decathlon", category: "Shopping", priority: 8, active: true, updated_at: now },
+    { id: "cat_bills", keywords: "electricity,bescom,water,gas,broadband,airtel,jio,vodafone,vi ,bsnl,recharge,dth,tata power", category: "Bills & utilities", priority: 9, active: true, updated_at: now },
+    { id: "cat_ent", keywords: "netflix,spotify,hotstar,prime,youtube,jiocinema,bookmyshow,pvr,inox", category: "Entertainment", priority: 8, active: true, updated_at: now },
+    { id: "cat_health", keywords: "pharmeasy,1mg,apollo,netmeds,practo,cult,healthify,hospital,clinic", category: "Health", priority: 8, active: true, updated_at: now },
+    { id: "cat_invest", keywords: "zerodha,groww,coin,mutual,sip,indmoney,kuvera,smallcase", category: "Investments", priority: 7, active: true, updated_at: now }
+  ].forEach(function (r) { if (!findObject_("CategoryRules", "id", r.id)) appendObject_("CategoryRules", r); });
+}
+/* menu: write categories onto every Uncategorized transaction that matches a rule */
+function autoCategorize() {
+  ensureInstalled_();
+  var lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    var r = autoCategorize_();
+    SpreadsheetApp.getActiveSpreadsheet().toast(r.categorised + " transactions categorised.", "Bling", 5);
+    return r;
+  } finally { lock.releaseLock(); }
+}
+function autoCategorize_() {
+  var rules = readObjects_("CategoryRules");
+  var rows = readObjects_("Transactions");
+  var changed = 0;
+  rows.forEach(function (t, i) {
+    if (t.deleted_at) return;
+    var cur = String(t.category || "");
+    if (cur && cur.toLowerCase() !== "uncategorized") return;
+    var cat = effectiveCat_(t, rules);
+    if (cat && cat !== cur) { writeObjectAt_("Transactions", i + 2, Object.assign({}, t, { category: cat, updated_at: nowIso_() })); changed++; }
+  });
+  return { categorised: changed };
 }
 function findAccountByLast4_(last4) { if (!last4) return null; return readObjects_("Accounts").find(function (a) { return truthy_(a.active) && String(a.last4) === String(last4); }) || null; }
 function safeTest_(pattern, value) { if (!pattern) return true; if (String(pattern).length > 1000) throw new Error("pattern too long"); return new RegExp(String(pattern), "i").test(String(value)); }

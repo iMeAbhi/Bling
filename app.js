@@ -118,7 +118,7 @@
   var cached = null;
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
-    screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview",
+    screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -182,6 +182,26 @@
       return true;
     });
   }
+  // compute a month's figures client-side from the full list, for any offset (0 = current)
+  function monthData(offset) {
+    var d = state.data, now = new Date();
+    var dd = new Date(now.getFullYear(), now.getMonth() + offset, 1), y = dd.getFullYear(), mo = dd.getMonth();
+    var list = (d.allTxns || []).filter(function (t) { var x = new Date(t.iso || t.date); return x.getFullYear() === y && x.getMonth() === mo; });
+    var spent = Math.abs(list.reduce(function (s, t) { return s + Math.min(0, t.amt); }, 0));
+    var caps = d.caps || (d.month.cats || []).map(function (c) { return { name: c.name, cap: c.cap }; });
+    var cats = caps.map(function (c) {
+      var cs = Math.abs(list.filter(function (t) { return String(t.cat) === String(c.name); }).reduce(function (s, t) { return s + Math.min(0, t.amt); }, 0));
+      return { name: c.name, spent: cs, cap: c.cap };
+    });
+    var budget = d.month.budget || 0, isCur = offset === 0;
+    var over = cats.filter(function (c) { return c.spent > c.cap; });
+    return {
+      label: dd.toLocaleString("en-IN", { month: "long", year: "numeric" }),
+      spent: spent, budget: budget, left: Math.max(0, budget - spent),
+      daysLeft: isCur ? d.month.daysLeft : 0, projected: isCur ? d.month.projected : spent, avgDay: isCur ? d.month.avgDay : Math.round(spent / 30),
+      cats: cats, alert: over.length ? over[0].name + " is " + inr(over[0].spent - over[0].cap) + " over cap." : "", list: list, isCur: isCur
+    };
+  }
   function txnList(items, limit) {
     if (!items.length) return '<div class="psub" style="padding:14px 0">No transactions in this period.</div>';
     return items.slice(0, limit || 60).map(function (t) {
@@ -216,14 +236,14 @@
   }
 
   function scSpend(d) {
-    var m = d.month;
-    var catBars = m.cats.map(function (c) {
-      var over = c.spent > c.cap, pctFill = Math.min(100, Math.round(c.spent / c.cap * 100));
+    var m = monthData(state.monthOffset);
+    var catBars = (m.cats.length ? m.cats : []).map(function (c) {
+      var over = c.spent > c.cap, pctFill = c.cap ? Math.min(100, Math.round(c.spent / c.cap * 100)) : 0;
       var rem = c.cap - c.spent;
-      return '<div class="ab"><span class="nm">' + esc(c.name) + '<br><span class="tab" style="letter-spacing:.05em">' + inr(c.spent).replace("₹", "₹") + " / " + inr(c.cap) + '</span></span>' +
+      return '<div class="ab"><span class="nm">' + esc(c.name) + '<br><span class="tab" style="letter-spacing:.05em">' + inr(c.spent) + " / " + inr(c.cap) + '</span></span>' +
         '<span class="track"><i style="width:' + pctFill + '%;background:' + (over ? "var(--neg)" : "var(--accent)") + '"></i></span>' +
         '<span class="pc num ' + (over ? "neg" : "pos") + '">' + (over ? "−" + inr(Math.abs(rem)) : inr(rem)) + '</span></div>';
-    }).join("");
+    }).join("") || '<div class="psub" style="padding:12px 0">No category caps yet. Set them in Fixed & budgets.</div>';
     var yb = d.year.months.map(function (h, i) {
       return '<div class="col' + (i === d.year.hi ? " hi" : "") + (h < 12 ? '" style="opacity:.35"' : '"') + '><i style="height:' + h + '%"></i><span>' + d.year.labels[i] + '</span></div>';
     }).join("");
@@ -248,14 +268,18 @@
       '<div class="sec"><span class="tab">This week\'s transactions</span></div>' + txnList(txnsFor("week")) + '</div>' +
       /* month */
       '<div class="pv' + (state.period === "month" ? " on" : "") + '" data-p="month">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0 2px">' +
+      '<button data-act="monthPrev" aria-label="Previous month" style="font-size:20px;color:var(--ink-soft);padding:4px 10px">‹</button>' +
+      '<span class="serif" style="font-size:16px;font-weight:600">' + esc(m.label) + '</span>' +
+      '<button data-act="monthNext" aria-label="Next month" style="font-size:20px;color:' + (state.monthOffset >= 0 ? "var(--rule)" : "var(--ink-soft)") + ';padding:4px 10px">›</button></div>' +
       '<div class="bsum"><div><span class="tab">Spent</span><div class="v serif num">' + inr(m.spent) + '</div></div>' +
       '<div><span class="tab">Left</span><div class="v serif num pos">' + inr(m.left) + '</div></div>' +
-      '<div><span class="tab">Days left</span><div class="v serif num">' + m.daysLeft + '</div></div></div>' +
-      '<div class="projbar"><i style="width:' + Math.round(m.spent / m.budget * 100) + '%"></i><span class="mark" style="left:100%"></span></div>' +
-      '<div class="psub" style="padding-top:10px">Projected month-end <b class="serif num" style="color:var(--ink)">' + inr(m.projected) + '</b> of ' + inr(m.budget) + ' budget · <span class="pos">on track</span> · avg ' + inr(m.avgDay) + '/day</div>' +
+      '<div><span class="tab">' + (m.isCur ? "Days left" : "Txns") + '</span><div class="v serif num">' + (m.isCur ? m.daysLeft : m.list.length) + '</div></div></div>' +
+      '<div class="projbar"><i style="width:' + (m.budget ? Math.min(100, Math.round(m.spent / m.budget * 100)) : 0) + '%"></i><span class="mark" style="left:100%"></span></div>' +
+      (m.isCur ? '<div class="psub" style="padding-top:10px">Projected month-end <b class="serif num" style="color:var(--ink)">' + inr(m.projected) + '</b> of ' + inr(m.budget) + ' budget · avg ' + inr(m.avgDay) + '/day</div>' : '<div class="psub" style="padding-top:10px">' + inr(m.spent) + ' of ' + inr(m.budget) + ' budget</div>') +
       '<div class="sec"><span class="tab">Category budgets</span><span class="more">Edit caps</span></div>' + catBars +
       (m.alert ? '<div class="callout" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="margin-top:8px;color:var(--ink)">' + esc(m.alert) + '</div></div>' : "") +
-      '<div class="sec"><span class="tab">This month\'s transactions</span></div>' + txnList(txnsFor("month")) + '</div>' +
+      '<div class="sec"><span class="tab">Transactions · ' + esc(m.label) + '</span></div>' + txnList(m.list) + '</div>' +
       /* year */
       '<div class="pv' + (state.period === "year" ? " on" : "") + '" data-p="year"><div class="big-stat serif num">' + inr(d.year.total) + '</div>' +
       '<div class="psub">spent in 2026 so far · avg <b class="num">' + inr(d.year.avgMo) + '</b>/mo</div>' +
@@ -503,6 +527,8 @@
     else if (t.dataset.act === "mark") { doMark(Number(t.dataset.idx)); }
     else if (t.dataset.act === "usecap") { doUseCap(Number(t.dataset.idx)); }
     else if (t.dataset.act === "scan") { doScan(); }
+    else if (t.dataset.act === "monthPrev") { state.monthOffset -= 1; render(); }
+    else if (t.dataset.act === "monthNext") { if (state.monthOffset < 0) { state.monthOffset += 1; render(); } }
   });
 
   function connected() { return state.connection.endpoint && state.connection.token; }

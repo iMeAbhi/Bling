@@ -28,9 +28,13 @@ Both flows stage transactions the app shows for review; nothing silently corrupt
 
 **Never** paste a token into a URL, screenshot, or commit. Rotate by creating a new token and revoking the old.
 
+## Categorising imported transactions
+
+Bank imports have raw UPI narration, not clean categories — so budgets read ₹0 until transactions are categorised. The `CategoryRules` tab maps keywords → a category (e.g. `zomato,swiggy → Eating out`), seeded with sensible India defaults. Edit it to fit your merchants. Rules apply automatically when the app reads your data (so budgets/patterns light up), and **Bling → Auto-categorise transactions** writes the categories permanently onto any still-uncategorised rows.
+
 ## What the sheet tabs are
 
-`Config` (settings), `Accounts`, `Transactions`, `Budgets`, `Recurring`, `DeviceTokens`. Headers are created for you; you can edit rows directly for bulk changes, or let the app write them.
+`Config` (settings), `Accounts`, `Transactions`, `Budgets`, `Recurring`, `CategoryRules`, `ParserRules`, `IngestEvents`, `DeviceTokens`. Headers are created for you; you can edit rows directly for bulk changes, or let the app write them.
 
 ## Actions the app calls
 
