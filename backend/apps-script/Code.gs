@@ -634,10 +634,11 @@ function showSmsToken() { ensureInstalled_(); SpreadsheetApp.getUi().alert("SMS 
 function upsertTransaction_(p) {
   if (!p.merchant && !p.category) throw new Error("merchant or category required");
   if (!isFinite(Number(p.amount))) throw new Error("amount invalid");
-  var accId = p.accountId || p.account_id;
-  requireObject_("Accounts", "id", accId);
   var id = safeId_(p.id || id_("txn"));
   var existing = findObject_("Transactions", "id", id);
+  var accId = p.accountId || p.account_id || (existing ? existing.object.account_id : "");   // keep account on edit
+  if (!accId) throw new Error("account required");
+  requireObject_("Accounts", "id", accId);
   var now = nowIso_();
   var row = {
     id: id, date: p.date ? new Date(p.date).toISOString() : now,

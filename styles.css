@@ -217,6 +217,9 @@ svg{display:block}
 .kindtoggle label{display:flex; align-items:center; gap:7px; cursor:pointer}
 .kindtoggle input{width:16px; height:16px; accent-color:var(--accent)}
 .field select{width:100%; padding:12px 13px; border:1px solid var(--rule); background:var(--paper-2); color:var(--ink); font:inherit; font-size:14px; border-radius:4px}
+.txnsearch{width:100%; margin-top:12px; padding:11px 13px; border:1px solid var(--rule); background:var(--paper-2); color:var(--ink); font:inherit; font-size:13px; border-radius:4px}
+.txnsearch:focus{outline:2px solid var(--accent); outline-offset:0}
+.li[data-tedit]:active, .w-tbl .tr[data-tedit]:hover{background:var(--paper-2)}
 
 /* boot */
 .boot{display:grid; place-items:center; height:100vh; color:var(--ink-faint); font-size:13px}

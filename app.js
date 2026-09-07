@@ -122,7 +122,7 @@
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
     screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
-    reviewing: false, makeRules: true, doneIds: {}, adding: false,
+    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false,
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -217,13 +217,24 @@
       cats: cats, alert: over.length ? over[0].name + " is " + inr(over[0].spent - over[0].cap) + " over cap." : "", list: list, isCur: isCur
     };
   }
+  function applyQuery(items) {
+    var q = (state.txnQuery || "").trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(function (t) { return (t.name + " " + (t.cat || "") + " " + Math.abs(t.amt)).toLowerCase().indexOf(q) !== -1; });
+  }
+  function searchBox() {
+    return '<input class="txnsearch" type="search" placeholder="Search transactions (merchant, amount, category)…" value="' + esc(state.txnQuery) + '">';
+  }
   function txnList(items, limit) {
-    if (!items.length) return '<div class="psub" style="padding:14px 0">No transactions in this period.</div>';
-    return items.slice(0, limit || 60).map(function (t) {
-      return '<div class="li"><span class="dt num">' + esc(t.date) + '</span><span class="nm">' + esc(t.name) +
+    items = applyQuery(items);
+    var lim = (state.txnQuery || "").trim() ? 400 : (limit || 60);
+    if (!items.length) return '<div class="psub" style="padding:14px 0">' + (state.txnQuery ? "No matches." : "No transactions in this period.") + '</div>';
+    return items.slice(0, lim).map(function (t) {
+      var editable = t.id ? ' data-tedit="' + esc(t.id) + '" style="cursor:pointer"' : "";
+      return '<div class="li"' + editable + '><span class="dt num">' + esc(t.date) + '</span><span class="nm">' + esc(t.name) +
         '<div class="ac">' + esc(t.cat || t.acct || "") + '</div></span><span class="amt num ' + (t.amt >= 0 ? "pos" : "neg") + '">' +
         (t.amt >= 0 ? "+" : "−") + inr(Math.abs(t.amt)) + '</span></div>';
-    }).join("") + (items.length > (limit || 60) ? '<div class="psub" style="padding:10px 0">+ ' + (items.length - (limit || 60)) + ' more</div>' : "");
+    }).join("") + (items.length > lim ? '<div class="psub" style="padding:10px 0">+ ' + (items.length - lim) + ' more</div>' : "");
   }
 
   /* ---------- phone screens ---------- */
@@ -271,6 +282,7 @@
       /* TRACK */
       '<div class="mv' + (state.spendMode === "track" ? " on" : "") + '" data-m="track">' +
       (uncatList().length ? '<div class="reviewbar"><div><div class="t">' + uncatList().length + ' uncategorised</div><div class="s">Assign them so budgets & patterns work</div></div><button data-act="review">Review</button></div>' : "") +
+      searchBox() +
       '<div class="period">' + ["today", "week", "month", "year"].map(function (p) {
         return '<button class="' + (state.period === p ? "on" : "") + '" data-period="' + p + '">' + p.charAt(0).toUpperCase() + p.slice(1) + '</button>';
       }).join("") + '</div>' +
@@ -422,7 +434,8 @@
       ? '<div><span class="tab">Spent</span><div class="v serif num">' + inr(m.spent) + '</div></div><div><span class="tab">Left</span><div class="v serif num pos">' + inr(m.left) + '</div></div><div><span class="tab">Projected</span><div class="v serif num">' + inr(m.projected) + '</div></div><div><span class="tab">Avg/day</span><div class="v serif num">' + inr(m.avgDay) + '</div></div>'
       : '<div><span class="tab">Spent (' + p + ')</span><div class="v serif num">' + inr(Math.abs(periodSpent)) + '</div></div><div><span class="tab">Transactions</span><div class="v serif num">' + list.length + '</div></div>';
     var caps = m.cats.map(function (c) { var over = c.spent > c.cap, rem = c.cap - c.spent; return '<div class="ab"><span class="nm" style="width:150px">' + esc(c.name) + ' <span class="tab" style="letter-spacing:.04em">' + Math.round(c.spent / 1000) + 'k/' + Math.round(c.cap / 1000) + 'k</span></span><span class="track"><i style="width:' + Math.min(100, Math.round(c.spent / c.cap * 100)) + '%;background:' + (over ? "var(--neg)" : "var(--accent)") + '"></i></span><span class="pc num ' + (over ? "neg" : "pos") + '">' + (over ? "−" + inr(Math.abs(rem)) : inr(rem)) + '</span></div>'; }).join("");
-    var rows = list.slice(0, 100).map(function (t) { return '<div class="tr"><span class="dt num">' + esc(t.date) + '</span><span class="nm">' + esc(t.name) + '<div class="s" style="font-size:10px;color:var(--ink-faint)">' + esc(t.cat || t.acct || "") + '</div></span><span class="amt num ' + (t.amt >= 0 ? "pos" : "neg") + '">' + (t.amt >= 0 ? "+" : "−") + inr(Math.abs(t.amt)) + '</span></div>'; }).join("") || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No transactions in this period.</div>';
+    var flist = applyQuery(list);
+    var rows = flist.slice(0, state.txnQuery ? 400 : 100).map(function (t) { return '<div class="tr" data-tedit="' + esc(t.id) + '" style="cursor:pointer"><span class="dt num">' + esc(t.date) + '</span><span class="nm">' + esc(t.name) + '<div class="s" style="font-size:10px;color:var(--ink-faint)">' + esc(t.cat || t.acct || "") + '</div></span><span class="amt num ' + (t.amt >= 0 ? "pos" : "neg") + '">' + (t.amt >= 0 ? "+" : "−") + inr(Math.abs(t.amt)) + '</span></div>'; }).join("") || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">' + (state.txnQuery ? "No matches." : "No transactions in this period.") + '</div>';
     return '<div class="wboard' + (state.wboard === "spend" ? " on" : "") + '" data-b="spend">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 0 0"><div class="lede-lbl">Spending & Budget</div>' +
       '<div style="display:flex;gap:6px;background:var(--paper-2);border:1px solid var(--rule);padding:4px;border-radius:3px">' + pill + '</div></div>' +
@@ -431,7 +444,7 @@
       '<div class="w-grid" style="grid-template-columns:1fr 1.2fr">' +
       '<div class="w-col lead"><div class="colhead">Category budgets <span class="more">' + (p === "month" ? "Edit caps" : "month") + '</span></div>' + (caps || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No caps set yet.</div>') +
       (p === "month" && m.alert ? '<div class="w-call" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="font-size:12px;color:var(--ink);margin-top:6px">' + esc(m.alert) + '</div></div>' : "") + '</div>' +
-      '<div class="w-col"><div class="colhead">Transactions · ' + p + ' <span class="more">' + list.length + '</span></div><div class="w-tbl">' + rows + '</div></div>' +
+      '<div class="w-col"><div class="colhead">Transactions · ' + p + ' <span class="more">' + flist.length + '</span></div>' + searchBox() + '<div class="w-tbl">' + rows + '</div></div>' +
       '</div></div>';
   }
   function wbInvest(d) {
@@ -518,7 +531,31 @@
     var app = document.getElementById("app");
     app.innerHTML = phoneShell(state.data) + webShell(state.data) +
       '<button class="fab" data-act="add" aria-label="Add entry">+</button>' +
-      (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "");
+      (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "") + (state.editId ? editModal() : "");
+    if (state._focusSearch) {
+      var s = [].slice.call(document.querySelectorAll(".txnsearch")).filter(function (i) { return i.offsetParent; })[0];
+      if (s) { s.focus(); var v = s.value; try { s.setSelectionRange(v.length, v.length); } catch (e) {} }
+      state._focusSearch = false;
+    }
+  }
+
+  function editModal() {
+    var t = (state.data.allTxns || []).filter(function (x) { return String(x.id) === String(state.editId); })[0];
+    if (!t) return "";
+    var isExp = t.amt < 0;
+    var cats = CATS.slice();
+    if (t.cat && cats.indexOf(t.cat) === -1) cats.unshift(t.cat);
+    var catOpts = cats.map(function (c) { return '<option' + (c === t.cat ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("");
+    return '<div class="modal"><button class="backdrop" data-act="closeEdit" aria-label="Close"></button><div class="sheet">' +
+      '<div class="mhead"><h2>Edit transaction</h2><button class="x" data-act="closeEdit" aria-label="Close">✕</button></div>' +
+      '<div class="psub" style="padding:6px 0 2px">' + esc(t.name) + ' · ' + esc(t.date) + '</div>' +
+      '<form data-form="edit">' +
+      '<div class="kindtoggle"><label><input type="radio" name="kind" value="expense"' + (isExp ? " checked" : "") + '> Expense</label><label><input type="radio" name="kind" value="income"' + (isExp ? "" : " checked") + '> Income</label></div>' +
+      '<label class="field"><span>Amount (₹)</span><input name="amount" type="number" inputmode="decimal" step="1" min="0" value="' + Math.abs(t.amt) + '"></label>' +
+      '<label class="field"><span>Category</span><select name="category">' + catOpts + '</select></label>' +
+      '<div style="display:flex;gap:10px;margin-top:18px"><button class="btn" type="submit">Save</button>' +
+      '<button class="btn ghost" type="button" data-act="deleteTxn" style="border-color:var(--neg);color:var(--neg)">Delete</button></div>' +
+      '</form></div></div>';
   }
 
   function addModal() {
@@ -564,7 +601,7 @@
   }
 
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat]");
+    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit]");
     if (!t) return;
     if (t.dataset.go) { state.screen = t.dataset.go; render(); }
     else if (t.dataset.wgo) { state.wboard = t.dataset.wgo; render(); }
@@ -587,7 +624,26 @@
     else if (t.dataset.cat && t.dataset.tid) { doCategorize(t.dataset.tid, t.dataset.cat); }
     else if (t.dataset.act === "add") { state.adding = true; render(); var a = document.querySelector('[name=amount]'); if (a) a.focus(); }
     else if (t.dataset.act === "closeAdd") { state.adding = false; render(); }
+    else if (t.dataset.tedit) { state.editId = t.dataset.tedit; render(); }
+    else if (t.dataset.act === "closeEdit") { state.editId = null; render(); }
+    else if (t.dataset.act === "deleteTxn") { deleteTxn(); }
   });
+
+  document.addEventListener("input", function (e) {
+    var s = e.target.closest(".txnsearch");
+    if (!s) return;
+    state.txnQuery = s.value;
+    state._focusSearch = true;
+    render();
+  });
+
+  function deleteTxn() {
+    var id = state.editId; if (!id) return;
+    state.editId = null;
+    if (!connected()) { render(); toast("Deleted (demo)"); return; }
+    render(); toast("Deleting…");
+    api("delete_transaction", { id: id }).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
 
   function doCategorize(id, cat) {
     // reflect locally right away
@@ -605,6 +661,18 @@
     }).catch(function (e) { toast("Save failed: " + e.message); });
   }
   function cssEsc(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+  function saveEdit(f) {
+    var id = state.editId; var t = (state.data.allTxns || []).filter(function (x) { return String(x.id) === String(id); })[0];
+    if (!t) return;
+    var fd = new FormData(f);
+    var amt = Number(fd.get("amount") || 0); if (!amt || amt <= 0) { toast("Enter an amount"); return; }
+    var kind = String(fd.get("kind") || "expense");
+    var payload = { id: id, amount: kind === "income" ? Math.abs(amt) : -Math.abs(amt), category: String(fd.get("category")), merchant: t.name, kind: kind, source: "manual" };
+    state.editId = null;
+    if (!connected()) { render(); toast("Saved (demo — connect to persist)"); return; }
+    render(); toast("Saving…");
+    api("upsert_transaction", payload).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
   function addEntry(f) {
     var fd = new FormData(f);
     var amt = Number(fd.get("amount") || 0);
@@ -646,6 +714,8 @@
   document.addEventListener("submit", function (e) {
     var ef = e.target.closest('form[data-form=entry]');
     if (ef) { e.preventDefault(); addEntry(ef); return; }
+    var edf = e.target.closest('form[data-form=edit]');
+    if (edf) { e.preventDefault(); saveEdit(edf); return; }
     var f = e.target.closest('form[data-form=conn]');
     if (!f) return;
     e.preventDefault();
