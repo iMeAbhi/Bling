@@ -185,7 +185,15 @@
     return toks[0] || "";
   }
   function isUncat(t) { var c = String(t.cat || "").toLowerCase(); return !c || c === "uncategorized"; }
+  function payeeSimilar(a, b) {
+    a = String(a || "").toLowerCase(); b = String(b || "").toLowerCase();
+    if (!a || !b) return false;
+    if (a === b || a.indexOf(b) === 0 || b.indexOf(a) === 0) return true;
+    var n = Math.min(a.length, b.length, 5);
+    return n >= 4 && a.slice(0, n) === b.slice(0, n);
+  }
   function sameAmountUncat(amt) { return (state.data.allTxns || []).filter(function (t) { return isUncat(t) && Math.abs(Math.abs(t.amt) - amt) <= 1; }); }
+  function similarUncat(amt, name) { var kw = keywordFrom(name); return sameAmountUncat(amt).filter(function (t) { return payeeSimilar(kw, keywordFrom(t.name)); }); }
   function markDone(id, cat) {
     var t = (state.data.allTxns || []).filter(function (x) { return String(x.id) === String(id); })[0];
     if (t) t.cat = cat;
@@ -602,7 +610,7 @@
     return '<div class="modal"><button class="backdrop" data-act="closeReview" aria-label="Close"></button><div class="sheet">' +
       '<div class="mhead"><h2>Categorise <span class="tab" style="margin-left:6px">' + all.length + ' left</span></h2><button class="x" data-act="closeReview" aria-label="Close">✕</button></div>' +
       searchBox() +
-      '<label class="remember"><input type="checkbox" data-act="toggleRules"' + (state.makeRules ? " checked" : "") + '> Remember similar (rule for merchants, or all of the same amount for rent/EMI)</label>' +
+      '<label class="remember"><input type="checkbox" data-act="toggleRules"' + (state.makeRules ? " checked" : "") + '> Apply to similar (same payee, and same-amount recurring like rent)</label>' +
       (list.length ? rows : '<div class="psub" style="padding:16px 0">' + (q ? "No matches." : "All caught up — nothing uncategorised.") + '</div>') +
       '</div></div>';
   }
@@ -669,18 +677,23 @@
     if (!connected()) { toast("Categorised (demo — connect to save)"); return; }
     api("set_txn_category", { id: id, category: cat }).then(function () {
       if (!state.makeRules || !txn) return;
-      if (amt >= 2000 && sameAmountUncat(amt).length >= 2) {
-        // fixed recurring (rent/EMI): tag every transaction of this exact amount
-        return api("categorize_amount", { amount: amt, category: cat }).then(function (r) {
-          sameAmountUncat(amt).forEach(function (x) { markDone(x.id, cat); });
-          toast("Tagged " + (r ? r.categorised : "") + " of " + inr(amt) + " as " + cat);
+      var kw = keywordFrom(txn.name);
+      var sims = similarUncat(amt, txn.name);        // same amount AND similar payee
+      var chain = Promise.resolve();
+      if (sims.length) {
+        chain = chain.then(function () {
+          return api("categorize_amount", { amount: amt, name: txn.name, category: cat }).then(function (r) {
+            sims.forEach(function (x) { markDone(x.id, cat); });
+            toast("Tagged " + (r ? r.categorised : sims.length + 1) + " × " + inr(amt) + " to " + (kw ? titleCaseJs(kw) : "same payee") + " as " + cat);
+          });
         });
       }
-      var kw = keywordFrom(txn.name);
-      if (kw) return api("add_category_rule", { keyword: kw, category: cat }).then(function (r) { if (r && r.applied) toast("Saved · rule applied to " + r.applied + " more"); });
+      if (kw) chain = chain.then(function () { return api("add_category_rule", { keyword: kw, category: cat }).then(function (r) { if (r && r.applied) toast("Rule '" + kw + "' → " + cat + " applied to " + r.applied + " more"); }); });
+      return chain;
     }).catch(function (e) { toast("Save failed: " + e.message); });
   }
   function cssEsc(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+  function titleCaseJs(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); }
   function saveEdit(f) {
     var id = state.editId; var t = (state.data.allTxns || []).filter(function (x) { return String(x.id) === String(id); })[0];
     if (!t) return;

@@ -622,17 +622,30 @@ function addCategoryRule_(p) {
   var applied = autoCategorize_();
   return { keyword: kw, category: cat, applied: applied.categorised };
 }
-/* app: tag every (uncategorised) transaction of the same amount — the reliable
-   way to categorise a fixed recurring like rent where the payee text varies */
+/* two payees are "similar" if one is a prefix of the other or they share a
+   >=5-char prefix — catches Shivam / ShivamK / ShivamA, Zomato variants, etc. */
+function payeeSimilar_(a, b) {
+  a = String(a || "").toLowerCase(); b = String(b || "").toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.indexOf(b) === 0 || b.indexOf(a) === 0) return true;
+  var n = Math.min(a.length, b.length, 5);
+  return n >= 4 && a.slice(0, n) === b.slice(0, n);
+}
+/* app: tag every uncategorised transaction of the same amount — optionally
+   restricted to a similar payee (reliable for rent/EMI where the name varies). */
 function categorizeAmount_(p) {
   var amt = Math.abs(num_(p.amount)), cat = clean_(p.category, 100);
   if (!amt || !cat) throw new Error("amount and category required");
+  var refPayee = p.name ? payeeOf_(String(p.name)) : "";
   var rows = readObjects_("Transactions"), n = 0;
   rows.forEach(function (t, i) {
     if (t.deleted_at) return;
     var c = String(t.category || "");
     if (c && c.toLowerCase() !== "uncategorized") return;
-    if (Math.abs(Math.abs(num_(t.amount)) - amt) <= 1) { writeObjectAt_("Transactions", i + 2, Object.assign({}, t, { category: cat, status: "confirmed", updated_at: nowIso_() })); n++; }
+    if (Math.abs(Math.abs(num_(t.amount)) - amt) > 1) return;
+    if (refPayee && !payeeSimilar_(refPayee, payeeOf_(t.merchant || t.category))) return;   // amount + payee
+    writeObjectAt_("Transactions", i + 2, Object.assign({}, t, { category: cat, status: "confirmed", updated_at: nowIso_() })); n++;
   });
   return { categorised: n, amount: amt, category: cat };
 }
