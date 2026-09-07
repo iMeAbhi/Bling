@@ -206,6 +206,18 @@ svg{display:block}
 .ureview.done .chips{display:none}
 .ureview .set{font-size:11px; color:var(--accent); font-weight:700; margin-top:8px}
 
+/* add-entry FAB + form */
+.fab{position:fixed; right:20px; bottom:calc(84px + env(safe-area-inset-bottom)); width:52px; height:52px; border-radius:50%;
+  background:var(--accent); color:var(--paper); font-size:28px; line-height:1; display:grid; place-items:center; z-index:70;
+  box-shadow:0 6px 20px rgba(11,107,79,.35); border:0}
+[data-theme=dark] .fab{color:#0d1712}
+.fab:active{transform:scale(.94)}
+@media(min-width:1024px){ .fab{bottom:28px; right:28px} }
+.kindtoggle{display:flex; gap:20px; padding:10px 0 2px; font-size:14px; font-weight:600}
+.kindtoggle label{display:flex; align-items:center; gap:7px; cursor:pointer}
+.kindtoggle input{width:16px; height:16px; accent-color:var(--accent)}
+.field select{width:100%; padding:12px 13px; border:1px solid var(--rule); background:var(--paper-2); color:var(--ink); font:inherit; font-size:14px; border-radius:4px}
+
 /* boot */
 .boot{display:grid; place-items:center; height:100vh; color:var(--ink-faint); font-size:13px}
 

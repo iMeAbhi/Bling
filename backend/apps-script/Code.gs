@@ -196,9 +196,20 @@ function buildSnapshot_() {
   var recent = sorted.slice(0, 8).map(function (t) {
     return { date: shortDate_(t.date, tz), name: t.merchant || t.category || "—", acct: acctName_(accounts, t.account_id) || t.source || "", amt: num_(t.amount) };
   });
-  // full list (capped) so the app can show every transaction and filter by period client-side
-  var allTxns = sorted.slice(0, 800).map(function (t) {
+  // full list (capped) so the app can show recent transactions and filter client-side
+  var allTxns = sorted.slice(0, 1500).map(function (t) {
     return { id: String(t.id), iso: new Date(t.date).toISOString(), date: shortDate_(t.date, tz), name: t.merchant || t.category || "—", cat: String(t.category || ""), acct: acctName_(accounts, t.account_id) || t.source || "", amt: num_(t.amount) };
+  });
+  // per-month aggregates over ALL transactions (so month/year figures stay correct
+  // even for history older than the raw list cap — UPI users blow past 1500 fast)
+  var monthly = {};
+  txns.forEach(function (t) {
+    if (t.kind === "transfer") return;
+    var k = dateKey_(t.date, tz, "yyyy-MM"); if (!k) return;
+    var m = monthly[k] || (monthly[k] = { spent: 0, count: 0, cats: {} });
+    var neg = Math.min(0, num_(t.amount));
+    m.count += 1;
+    if (neg < 0) { m.spent += -neg; var c = String(t.category || "Uncategorized"); m.cats[c] = (m.cats[c] || 0) + (-neg); }
   });
   var todayEntries = txns.filter(function (t) { return dateKey_(t.date, tz, "yyyy-MM-dd") === todayKey; })
     .map(function (t) { return { time: Utilities.formatDate(new Date(t.date), tz, "h:mma").toLowerCase(), name: t.merchant || t.category, cat: t.category || t.source, amt: num_(t.amount) }; });
@@ -247,6 +258,8 @@ function buildSnapshot_() {
     invest: investSummary_(accounts, allocation),
     recent: recent,
     allTxns: allTxns,
+    monthly: monthly,
+    accountsList: accounts.map(function (a) { return { id: String(a.id), name: String(a.name), type: String(a.type) }; }),
     predict: { brief: { head: "", body: "" }, nextMonth: fixedTotal + capsTotal, cardBill: cardBill_(accounts), cashflowBefore: fixedTotal, cashflowBuffer: buffer },
     sync: syncHealth_()
   };

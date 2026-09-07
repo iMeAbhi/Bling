@@ -96,6 +96,8 @@
       { date: "5 Sep", name: "Swiggy", acct: "Eating out", amt: -640 },
       { date: "1 Sep", name: "Salary", acct: "HDFC", amt: 145000 }
     ],
+    accountsList: [{ id: "acc_hdfc", name: "Salary account", type: "bank" }, { id: "acc_cash", name: "Cash", type: "cash" }],
+    monthly: {},
     allTxns: [
       { iso: new Date().toISOString(), date: "7 Sep", name: "Rapido", cat: "Transport", acct: "HDFC", amt: -142 },
       { iso: new Date().toISOString(), date: "7 Sep", name: "Blinkit", cat: "Groceries", acct: "HDFC", amt: -1240 },
@@ -120,7 +122,7 @@
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
     screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
-    reviewing: false, makeRules: true, doneIds: {},
+    reviewing: false, makeRules: true, doneIds: {}, adding: false,
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -195,18 +197,22 @@
   function monthData(offset) {
     var d = state.data, now = new Date();
     var dd = new Date(now.getFullYear(), now.getMonth() + offset, 1), y = dd.getFullYear(), mo = dd.getMonth();
+    var key = y + "-" + String(mo + 1).padStart(2, "0");
+    var rec = (d.monthly || {})[key];                                  // server aggregate over ALL txns
     var list = (d.allTxns || []).filter(function (t) { var x = new Date(t.iso || t.date); return x.getFullYear() === y && x.getMonth() === mo; });
-    var spent = Math.abs(list.reduce(function (s, t) { return s + Math.min(0, t.amt); }, 0));
+    var listSpent = Math.abs(list.reduce(function (s, t) { return s + Math.min(0, t.amt); }, 0));
+    var spent = rec ? rec.spent : listSpent;
+    var count = rec ? rec.count : list.length;
     var caps = d.caps || (d.month.cats || []).map(function (c) { return { name: c.name, cap: c.cap }; });
     var cats = caps.map(function (c) {
-      var cs = Math.abs(list.filter(function (t) { return String(t.cat) === String(c.name); }).reduce(function (s, t) { return s + Math.min(0, t.amt); }, 0));
+      var cs = rec ? (rec.cats[c.name] || 0) : Math.abs(list.filter(function (t) { return String(t.cat) === String(c.name); }).reduce(function (s, t) { return s + Math.min(0, t.amt); }, 0));
       return { name: c.name, spent: cs, cap: c.cap };
     });
     var budget = d.month.budget || 0, isCur = offset === 0;
     var over = cats.filter(function (c) { return c.spent > c.cap; });
     return {
       label: dd.toLocaleString("en-IN", { month: "long", year: "numeric" }),
-      spent: spent, budget: budget, left: Math.max(0, budget - spent),
+      spent: spent, budget: budget, left: Math.max(0, budget - spent), count: count,
       daysLeft: isCur ? d.month.daysLeft : 0, projected: isCur ? d.month.projected : spent, avgDay: isCur ? d.month.avgDay : Math.round(spent / 30),
       cats: cats, alert: over.length ? over[0].name + " is " + inr(over[0].spent - over[0].cap) + " over cap." : "", list: list, isCur: isCur
     };
@@ -289,7 +295,8 @@
       (m.isCur ? '<div class="psub" style="padding-top:10px">Projected month-end <b class="serif num" style="color:var(--ink)">' + inr(m.projected) + '</b> of ' + inr(m.budget) + ' budget · avg ' + inr(m.avgDay) + '/day</div>' : '<div class="psub" style="padding-top:10px">' + inr(m.spent) + ' of ' + inr(m.budget) + ' budget</div>') +
       '<div class="sec"><span class="tab">Category budgets</span><span class="more">Edit caps</span></div>' + catBars +
       (m.alert ? '<div class="callout" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="margin-top:8px;color:var(--ink)">' + esc(m.alert) + '</div></div>' : "") +
-      '<div class="sec"><span class="tab">Transactions · ' + esc(m.label) + '</span></div>' + txnList(m.list) + '</div>' +
+      '<div class="sec"><span class="tab">Transactions · ' + esc(m.label) + '</span>' + (m.count > m.list.length ? '<span class="more" style="color:var(--ink-faint)">' + m.list.length + ' of ' + m.count + '</span>' : "") + '</div>' + txnList(m.list, 200) +
+      (m.count > m.list.length ? '<div class="flow">Totals above cover all ' + m.count + ' transactions; the list shows the most recent ' + m.list.length + '. Open the Sheet for the full ledger.</div>' : "") + '</div>' +
       /* year */
       '<div class="pv' + (state.period === "year" ? " on" : "") + '" data-p="year"><div class="big-stat serif num">' + inr(d.year.total) + '</div>' +
       '<div class="psub">spent in 2026 so far · avg <b class="num">' + inr(d.year.avgMo) + '</b>/mo</div>' +
@@ -419,6 +426,7 @@
     return '<div class="wboard' + (state.wboard === "spend" ? " on" : "") + '" data-b="spend">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 0 0"><div class="lede-lbl">Spending & Budget</div>' +
       '<div style="display:flex;gap:6px;background:var(--paper-2);border:1px solid var(--rule);padding:4px;border-radius:3px">' + pill + '</div></div>' +
+      (uncatList().length ? '<div class="reviewbar"><div><div class="t">' + uncatList().length + ' uncategorised</div><div class="s">Assign them so budgets & patterns work</div></div><button data-act="review">Review</button></div>' : "") +
       '<div class="w-trio" style="margin:14px 0">' + strip + '</div>' +
       '<div class="w-grid" style="grid-template-columns:1fr 1.2fr">' +
       '<div class="w-col lead"><div class="colhead">Category budgets <span class="more">' + (p === "month" ? "Edit caps" : "month") + '</span></div>' + (caps || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No caps set yet.</div>') +
@@ -508,7 +516,26 @@
     var meta = document.querySelector('meta[name=theme-color]');
     if (meta) meta.setAttribute("content", state.theme === "dark" ? "#17150F" : "#F6F2E9");
     var app = document.getElementById("app");
-    app.innerHTML = phoneShell(state.data) + webShell(state.data) + (state.reviewing ? reviewModal() : "");
+    app.innerHTML = phoneShell(state.data) + webShell(state.data) +
+      '<button class="fab" data-act="add" aria-label="Add entry">+</button>' +
+      (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "");
+  }
+
+  function addModal() {
+    var accs = state.data.accountsList || [];
+    var accOpts = accs.length ? accs.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>'; }).join("") : '<option value="">(connect your Sheet)</option>';
+    var catOpts = CATS.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join("");
+    return '<div class="modal"><button class="backdrop" data-act="closeAdd" aria-label="Close"></button><div class="sheet">' +
+      '<div class="mhead"><h2>Add entry</h2><button class="x" data-act="closeAdd" aria-label="Close">✕</button></div>' +
+      '<form data-form="entry">' +
+      '<div class="kindtoggle"><label><input type="radio" name="kind" value="expense" checked> Expense</label><label><input type="radio" name="kind" value="income"> Income</label></div>' +
+      '<label class="field"><span>Amount (₹)</span><input name="amount" type="number" inputmode="decimal" step="1" min="0" required autofocus placeholder="0"></label>' +
+      '<label class="field"><span>What for</span><input name="merchant" type="text" placeholder="e.g. Auto, Chai, Gift"></label>' +
+      '<label class="field"><span>Category</span><select name="category">' + catOpts + '</select></label>' +
+      '<label class="field"><span>Account</span><select name="account">' + accOpts + '</select></label>' +
+      '<label class="field"><span>Date</span><input name="date" type="date" value="' + new Date().toISOString().slice(0, 10) + '"></label>' +
+      '<button class="btn" type="submit" style="margin-top:18px">Add entry</button>' +
+      '</form></div></div>';
   }
 
   function reviewModal() {
@@ -558,6 +585,8 @@
     else if (t.dataset.act === "closeReview") { state.reviewing = false; render(); }
     else if (t.dataset.act === "toggleRules") { state.makeRules = !state.makeRules; }
     else if (t.dataset.cat && t.dataset.tid) { doCategorize(t.dataset.tid, t.dataset.cat); }
+    else if (t.dataset.act === "add") { state.adding = true; render(); var a = document.querySelector('[name=amount]'); if (a) a.focus(); }
+    else if (t.dataset.act === "closeAdd") { state.adding = false; render(); }
   });
 
   function doCategorize(id, cat) {
@@ -576,6 +605,23 @@
     }).catch(function (e) { toast("Save failed: " + e.message); });
   }
   function cssEsc(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+  function addEntry(f) {
+    var fd = new FormData(f);
+    var amt = Number(fd.get("amount") || 0);
+    if (!amt || amt <= 0) { toast("Enter an amount"); return; }
+    var kind = String(fd.get("kind") || "expense");
+    var payload = {
+      amount: kind === "income" ? Math.abs(amt) : -Math.abs(amt),
+      merchant: String(fd.get("merchant") || "").trim() || String(fd.get("category")),
+      category: String(fd.get("category")), accountId: String(fd.get("account") || ""),
+      date: String(fd.get("date") || ""), kind: kind, source: "manual"
+    };
+    state.adding = false;
+    if (!connected()) { render(); toast("Added (demo — connect your Sheet to save)"); return; }
+    if (!payload.accountId) { render(); toast("Add an account in your Sheet first"); return; }
+    toast("Adding…");
+    api("upsert_transaction", payload).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); render(); });
+  }
 
   function connected() { return state.connection.endpoint && state.connection.token; }
   function needSheet() { toast("Connect your Sheet first (You → Your Sheet)"); }
@@ -598,6 +644,8 @@
   }
 
   document.addEventListener("submit", function (e) {
+    var ef = e.target.closest('form[data-form=entry]');
+    if (ef) { e.preventDefault(); addEntry(ef); return; }
     var f = e.target.closest('form[data-form=conn]');
     if (!f) return;
     e.preventDefault();
