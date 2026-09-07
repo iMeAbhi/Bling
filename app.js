@@ -103,7 +103,10 @@
       { iso: new Date().toISOString(), date: "7 Sep", name: "Blinkit", cat: "Groceries", acct: "HDFC", amt: -1240 },
       { iso: new Date(Date.now() - 2 * 864e5).toISOString(), date: "5 Sep", name: "Swiggy", cat: "Eating out", acct: "HDFC", amt: -640 },
       { iso: new Date(Date.now() - 6 * 864e5).toISOString(), date: "1 Sep", name: "Salary", cat: "Income", acct: "HDFC", amt: 145000 },
-      { id: "demo_u1", iso: new Date().toISOString(), date: "7 Sep", name: "WDL TFR UPI/DR/6367/MOKOBAR", cat: "Uncategorized", acct: "HDFC", amt: -420 }
+      { id: "demo_u1", iso: new Date().toISOString(), date: "7 Sep", name: "WDL TFR UPI/DR/6367/MOKOBAR", cat: "Uncategorized", acct: "HDFC", accId: "acc_hdfc", amt: -420 },
+      { id: "demo_r1", iso: new Date(Date.now() - 5 * 864e5).toISOString(), date: "2 Sep", name: "WDL TFR UPI/DR/639912491459/SHIVAM/SBIN/Paid", cat: "Uncategorized", acct: "HDFC", accId: "acc_hdfc", amt: -17910 },
+      { id: "demo_r2", iso: new Date(Date.now() - 35 * 864e5).toISOString(), date: "3 Aug", name: "WDL TFR UPI/DR/658029466737/SHIVAMA/HDFC/Paid", cat: "Uncategorized", acct: "HDFC", accId: "acc_hdfc", amt: -17910 },
+      { id: "demo_r3", iso: new Date(Date.now() - 66 * 864e5).toISOString(), date: "3 Jul", name: "WDL TFR UPI/DR/645322523888/SHIVAMK/SBIN/rent", cat: "Uncategorized", acct: "HDFC", accId: "acc_hdfc", amt: -17910 }
     ],
     predict: {
       brief: { head: "Three big dues land in the same week.", body: "Rent, the Atlas card bill and your home-loan EMI all fall between the 3rd and 15th — <b>₹84,780</b> before your salary clears on the 1st. Move ₹20,000 from Rainy-day now and you stay above buffer." },
@@ -194,6 +197,31 @@
   }
   function sameAmountUncat(amt) { return (state.data.allTxns || []).filter(function (t) { return isUncat(t) && Math.abs(Math.abs(t.amt) - amt) <= 1; }); }
   function similarUncat(amt, name) { var kw = keywordFrom(name); return sameAmountUncat(amt).filter(function (t) { return payeeSimilar(kw, keywordFrom(t.name)); }); }
+  function medianJs(a) { if (!a.length) return 1; var s = a.slice().sort(function (x, y) { return x - y; }); return s[Math.floor(s.length / 2)]; }
+  function ordinalJs(n) { n = Number(n) || 0; var s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+  var FIXED_CATS = { "Rent": 1, "EMI / Loan": 1, "Bills & utilities": 1, "Subscriptions": 1 };
+  // cluster uncategorised transactions into recurring candidates: same amount (±₹10),
+  // similar payee, seen in >=3 distinct months
+  function recurringGroups() {
+    var list = uncatList(), byAmt = {};
+    list.forEach(function (t) { var a = Math.round(Math.abs(t.amt) / 10) * 10; (byAmt[a] = byAmt[a] || []).push(t); });
+    var groups = [];
+    Object.keys(byAmt).forEach(function (a) {
+      var items = byAmt[a], used = [];
+      for (var i = 0; i < items.length; i++) {
+        if (used[i]) continue;
+        var cluster = [items[i]]; used[i] = true; var ki = keywordFrom(items[i].name);
+        for (var j = i + 1; j < items.length; j++) { if (used[j]) continue; if (payeeSimilar(ki, keywordFrom(items[j].name))) { cluster.push(items[j]); used[j] = true; } }
+        var months = {}; cluster.forEach(function (t) { months[String(t.iso || "").slice(0, 7)] = true; });
+        if (Object.keys(months).length >= 3) {
+          var days = cluster.map(function (t) { return new Date(t.iso).getDate(); });
+          groups.push({ amt: Math.abs(cluster[0].amt), payee: titleCaseJs(ki || "payment"), count: cluster.length, months: Object.keys(months).length, day: medianJs(days), sample: cluster[0], ids: cluster.map(function (x) { return x.id; }) });
+        }
+      }
+    });
+    groups.sort(function (x, y) { return y.months - x.months || y.amt - x.amt; });
+    return groups;
+  }
   function markDone(id, cat) {
     var t = (state.data.allTxns || []).filter(function (x) { return String(x.id) === String(id); })[0];
     if (t) t.cat = cat;
@@ -598,20 +626,23 @@
   }
 
   function reviewModal() {
-    var all = uncatList();
+    var groups = recurringGroups(); state._groups = groups;
     var q = (state.txnQuery || "").trim().toLowerCase();
-    var list = (q ? all.filter(function (t) { return (t.name + " " + Math.abs(t.amt) + " " + (t.cat || "")).toLowerCase().indexOf(q) !== -1; }) : all).slice(0, 200);
-    var rows = list.map(function (t, i) {
-      var done = state.doneIds[t.id];
-      var chips = CATS.map(function (c) { return '<button data-cat="' + esc(c) + '" data-tid="' + esc(t.id) + '">' + esc(c) + '</button>'; }).join("");
-      return '<div class="ureview' + (done ? " done" : "") + '" data-row="' + esc(t.id) + '"><div class="top"><span class="n">' + esc(t.name) + '</span><span class="a num ' + (t.amt >= 0 ? "pos" : "neg") + '">' + (t.amt >= 0 ? "+" : "−") + inr(Math.abs(t.amt)) + '</span></div>' +
-        (done ? '<div class="set">✓ ' + esc(done) + '</div>' : '<div class="chips">' + chips + '</div>') + '</div>';
+    var shown = q ? groups.filter(function (g) { return (g.payee + " " + g.amt + " " + (g.sample.name || "")).toLowerCase().indexOf(q) !== -1; }) : groups;
+    var oneoffs = uncatList().length;
+    var rows = shown.map(function (g, i) {
+      var idx = groups.indexOf(g);
+      var chips = CATS.map(function (c) { return '<button data-cat="' + esc(c) + '" data-gid="' + idx + '">' + esc(c) + '</button>'; }).join("");
+      return '<div class="ureview" data-grow="g' + idx + '"><div class="top"><span class="n">' + esc(g.payee) + ' · ' + g.count + ' payments</span><span class="a num neg">−' + inr(g.amt) + '</span></div>' +
+        '<div class="s" style="font-size:11px;color:var(--ink-soft);margin-top:2px">' + g.months + ' months · around the ' + ordinalJs(g.day) + ' · ' + esc(String(g.sample.name).slice(0, 42)) + '</div>' +
+        '<div class="chips">' + chips + '</div></div>';
     }).join("");
     return '<div class="modal"><button class="backdrop" data-act="closeReview" aria-label="Close"></button><div class="sheet">' +
-      '<div class="mhead"><h2>Categorise <span class="tab" style="margin-left:6px">' + all.length + ' left</span></h2><button class="x" data-act="closeReview" aria-label="Close">✕</button></div>' +
+      '<div class="mhead"><h2>Recurring <span class="tab" style="margin-left:6px">' + groups.length + ' found</span></h2><button class="x" data-act="closeReview" aria-label="Close">✕</button></div>' +
+      '<div class="psub" style="padding:2px 0 4px">Payments that repeat (same amount + payee, 3+ months). Tag one to tag them all — fixed ones (rent, EMI, bills, subscriptions) also get added to your obligations.</div>' +
       searchBox() +
-      '<label class="remember"><input type="checkbox" data-act="toggleRules"' + (state.makeRules ? " checked" : "") + '> Apply to similar (same payee, and same-amount recurring like rent)</label>' +
-      (list.length ? rows : '<div class="psub" style="padding:16px 0">' + (q ? "No matches." : "All caught up — nothing uncategorised.") + '</div>') +
+      (shown.length ? rows : '<div class="psub" style="padding:16px 0">' + (q ? "No matches." : "No recurring patterns found yet — need 3+ months of history.") + '</div>') +
+      '<div class="flow" style="margin-top:14px">' + oneoffs + ' uncategorised in total. One-off payments aren\'t shown here — tag those from the transaction list (tap any row).</div>' +
       '</div></div>';
   }
 
@@ -646,6 +677,7 @@
     else if (t.dataset.act === "review") { state.reviewing = true; state.txnQuery = ""; render(); }
     else if (t.dataset.act === "closeReview") { state.reviewing = false; state.txnQuery = ""; render(); }
     else if (t.dataset.act === "toggleRules") { state.makeRules = !state.makeRules; }
+    else if (t.dataset.cat && t.dataset.gid) { doCategorizeGroup(Number(t.dataset.gid), t.dataset.cat); }
     else if (t.dataset.cat && t.dataset.tid) { doCategorize(t.dataset.tid, t.dataset.cat); }
     else if (t.dataset.act === "add") { state.adding = true; render(); var a = document.querySelector('[name=amount]'); if (a) a.focus(); }
     else if (t.dataset.act === "closeAdd") { state.adding = false; render(); }
@@ -694,6 +726,21 @@
   }
   function cssEsc(s) { return String(s).replace(/["\\]/g, "\\$&"); }
   function titleCaseJs(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); }
+  function doCategorizeGroup(i, cat) {
+    var g = (state._groups || [])[i]; if (!g) return;
+    // mark the group row done in place
+    var row = document.querySelector('[data-grow="g' + i + '"]');
+    if (row) { row.classList.add("done"); var ch = row.querySelector(".chips"); if (ch) ch.remove(); if (!row.querySelector(".set")) { var s = document.createElement("div"); s.className = "set"; s.textContent = "✓ " + cat + " · " + g.count + " tagged" + (FIXED_CATS[cat] ? " · added to Fixed" : ""); row.appendChild(s); } }
+    g.ids.forEach(function (id) { var x = (state.data.allTxns || []).filter(function (y) { return String(y.id) === String(id); })[0]; if (x) x.cat = cat; state.doneIds[id] = cat; });
+    if (!connected()) { toast("Categorised (demo)"); return; }
+    api("categorize_amount", { amount: g.amt, name: g.sample.name, category: cat }).then(function (r) {
+      toast("Tagged " + (r ? r.categorised : g.count) + " × " + inr(g.amt) + " as " + cat);
+      if (FIXED_CATS[cat]) {
+        return api("confirm_recurring", { recurring: { name: g.payee, amount: g.amt, account_id: g.sample.accId, due_day: g.day, category: cat, tolerance_pct: 1 } })
+          .then(function () { toast(g.payee + " added to Fixed expenses"); });
+      }
+    }).catch(function (e) { toast("Failed: " + e.message); });
+  }
   function saveEdit(f) {
     var id = state.editId; var t = (state.data.allTxns || []).filter(function (x) { return String(x.id) === String(id); })[0];
     if (!t) return;
