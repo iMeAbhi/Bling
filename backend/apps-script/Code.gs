@@ -130,6 +130,7 @@ function doPost(e) {
         case "auto_categorize": return json_({ ok: true, data: autoCategorize_() });
         case "set_txn_category": return json_({ ok: true, data: setTxnCategory_(payload) });
         case "add_category_rule": return json_({ ok: true, data: addCategoryRule_(payload) });
+        case "categorize_amount": return json_({ ok: true, data: categorizeAmount_(payload) });
         default: throw new Error("Unknown action: " + action);
       }
     } finally {
@@ -620,6 +621,20 @@ function addCategoryRule_(p) {
   }
   var applied = autoCategorize_();
   return { keyword: kw, category: cat, applied: applied.categorised };
+}
+/* app: tag every (uncategorised) transaction of the same amount — the reliable
+   way to categorise a fixed recurring like rent where the payee text varies */
+function categorizeAmount_(p) {
+  var amt = Math.abs(num_(p.amount)), cat = clean_(p.category, 100);
+  if (!amt || !cat) throw new Error("amount and category required");
+  var rows = readObjects_("Transactions"), n = 0;
+  rows.forEach(function (t, i) {
+    if (t.deleted_at) return;
+    var c = String(t.category || "");
+    if (c && c.toLowerCase() !== "uncategorized") return;
+    if (Math.abs(Math.abs(num_(t.amount)) - amt) <= 1) { writeObjectAt_("Transactions", i + 2, Object.assign({}, t, { category: cat, status: "confirmed", updated_at: nowIso_() })); n++; }
+  });
+  return { categorised: n, amount: amt, category: cat };
 }
 /* menu: write categories onto every Uncategorized transaction that matches a rule */
 function autoCategorize() {

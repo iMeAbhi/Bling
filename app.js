@@ -175,10 +175,23 @@
   }
   var CATS = ["Rent", "EMI / Loan", "Bills & utilities", "Subscriptions", "Eating out", "Groceries", "Transport", "Shopping", "Entertainment", "Health", "Investments", "Income", "Transfer", "Other"];
   function uncatList() { return (state.data.allTxns || []).filter(function (t) { var c = String(t.cat || "").toLowerCase(); return !c || c === "uncategorized"; }); }
+  var KW_NOISE = /^(wdl|tfr|upi|dr|cr|ach|neft|imps|rtgs|debit|credit|paid|rent|bank|ltd|pvt|india|sbin|hdfc|icic|yesb|utib|axis|kkbk|pytm|brokin|clearin|payment|transfer)$/;
   function keywordFrom(name) {
-    var toks = String(name || "").toLowerCase().split(/[^a-z]+/).filter(function (s) { return s.length >= 4 && ["upir", "upi", "tfr", "wdl", "hdfc", "icic", "sbin", "yesb", "utib", "paid", "bank"].indexOf(s) === -1; });
+    var s = String(name || "");
+    var m = s.match(/\d{6,}[\/ ]+([A-Za-z]{3,20})/);                 // payee after the reference number
+    if (m && !KW_NOISE.test(m[1].toLowerCase())) return m[1].toLowerCase();
+    var toks = s.toLowerCase().split(/[^a-z]+/).filter(function (t) { return t.length >= 4 && !KW_NOISE.test(t); });
     toks.sort(function (a, b) { return b.length - a.length; });
     return toks[0] || "";
+  }
+  function isUncat(t) { var c = String(t.cat || "").toLowerCase(); return !c || c === "uncategorized"; }
+  function sameAmountUncat(amt) { return (state.data.allTxns || []).filter(function (t) { return isUncat(t) && Math.abs(Math.abs(t.amt) - amt) <= 1; }); }
+  function markDone(id, cat) {
+    var t = (state.data.allTxns || []).filter(function (x) { return String(x.id) === String(id); })[0];
+    if (t) t.cat = cat;
+    state.doneIds[id] = cat;
+    var row = document.querySelector('.ureview[data-row="' + cssEsc(id) + '"]');
+    if (row) { row.classList.add("done"); var ch = row.querySelector(".chips"); if (ch) ch.remove(); if (!row.querySelector(".set")) { var s = document.createElement("div"); s.className = "set"; s.textContent = "✓ " + cat; row.appendChild(s); } }
   }
   // filter the full transaction list to a period, client-side
   function txnsFor(period) {
@@ -533,7 +546,8 @@
       '<button class="fab" data-act="add" aria-label="Add entry">+</button>' +
       (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "") + (state.editId ? editModal() : "");
     if (state._focusSearch) {
-      var s = [].slice.call(document.querySelectorAll(".txnsearch")).filter(function (i) { return i.offsetParent; })[0];
+      var pool = document.querySelector(".modal") ? document.querySelectorAll(".modal .txnsearch") : document.querySelectorAll(".txnsearch");
+      var s = [].slice.call(pool).filter(function (i) { return i.offsetParent; })[0];
       if (s) { s.focus(); var v = s.value; try { s.setSelectionRange(v.length, v.length); } catch (e) {} }
       state._focusSearch = false;
     }
@@ -576,7 +590,9 @@
   }
 
   function reviewModal() {
-    var list = uncatList().slice(0, 40);
+    var all = uncatList();
+    var q = (state.txnQuery || "").trim().toLowerCase();
+    var list = (q ? all.filter(function (t) { return (t.name + " " + Math.abs(t.amt) + " " + (t.cat || "")).toLowerCase().indexOf(q) !== -1; }) : all).slice(0, 200);
     var rows = list.map(function (t, i) {
       var done = state.doneIds[t.id];
       var chips = CATS.map(function (c) { return '<button data-cat="' + esc(c) + '" data-tid="' + esc(t.id) + '">' + esc(c) + '</button>'; }).join("");
@@ -584,9 +600,10 @@
         (done ? '<div class="set">✓ ' + esc(done) + '</div>' : '<div class="chips">' + chips + '</div>') + '</div>';
     }).join("");
     return '<div class="modal"><button class="backdrop" data-act="closeReview" aria-label="Close"></button><div class="sheet">' +
-      '<div class="mhead"><h2>Categorise</h2><button class="x" data-act="closeReview" aria-label="Close">✕</button></div>' +
-      '<label class="remember"><input type="checkbox" data-act="toggleRules"' + (state.makeRules ? " checked" : "") + '> Remember similar merchants (create a keyword rule)</label>' +
-      (list.length ? rows : '<div class="psub" style="padding:16px 0">All caught up — nothing uncategorised.</div>') +
+      '<div class="mhead"><h2>Categorise <span class="tab" style="margin-left:6px">' + all.length + ' left</span></h2><button class="x" data-act="closeReview" aria-label="Close">✕</button></div>' +
+      searchBox() +
+      '<label class="remember"><input type="checkbox" data-act="toggleRules"' + (state.makeRules ? " checked" : "") + '> Remember similar (rule for merchants, or all of the same amount for rent/EMI)</label>' +
+      (list.length ? rows : '<div class="psub" style="padding:16px 0">' + (q ? "No matches." : "All caught up — nothing uncategorised.") + '</div>') +
       '</div></div>';
   }
 
@@ -618,8 +635,8 @@
     else if (t.dataset.act === "scan") { doScan(); }
     else if (t.dataset.act === "monthPrev") { state.monthOffset -= 1; render(); }
     else if (t.dataset.act === "monthNext") { if (state.monthOffset < 0) { state.monthOffset += 1; render(); } }
-    else if (t.dataset.act === "review") { state.reviewing = true; render(); }
-    else if (t.dataset.act === "closeReview") { state.reviewing = false; render(); }
+    else if (t.dataset.act === "review") { state.reviewing = true; state.txnQuery = ""; render(); }
+    else if (t.dataset.act === "closeReview") { state.reviewing = false; state.txnQuery = ""; render(); }
     else if (t.dataset.act === "toggleRules") { state.makeRules = !state.makeRules; }
     else if (t.dataset.cat && t.dataset.tid) { doCategorize(t.dataset.tid, t.dataset.cat); }
     else if (t.dataset.act === "add") { state.adding = true; render(); var a = document.querySelector('[name=amount]'); if (a) a.focus(); }
@@ -646,18 +663,21 @@
   }
 
   function doCategorize(id, cat) {
-    // reflect locally right away
     var txn = (state.data.allTxns || []).filter(function (x) { return String(x.id) === String(id); })[0];
-    if (txn) txn.cat = cat;
-    state.doneIds[id] = cat;
-    // update the done row in place without full re-render (keeps scroll position)
-    var row = document.querySelector('.ureview[data-row="' + cssEsc(id) + '"]');
-    if (row) { row.classList.add("done"); var chips = row.querySelector(".chips"); if (chips) chips.remove(); var s = document.createElement("div"); s.className = "set"; s.textContent = "✓ " + cat; row.appendChild(s); }
+    var amt = txn ? Math.abs(txn.amt) : 0;
+    markDone(id, cat);
     if (!connected()) { toast("Categorised (demo — connect to save)"); return; }
     api("set_txn_category", { id: id, category: cat }).then(function () {
-      if (state.makeRules && txn) { var kw = keywordFrom(txn.name); if (kw) return api("add_category_rule", { keyword: kw, category: cat }); }
-    }).then(function (r) {
-      if (r && r.applied) toast("Saved · rule applied to " + r.applied);
+      if (!state.makeRules || !txn) return;
+      if (amt >= 2000 && sameAmountUncat(amt).length >= 2) {
+        // fixed recurring (rent/EMI): tag every transaction of this exact amount
+        return api("categorize_amount", { amount: amt, category: cat }).then(function (r) {
+          sameAmountUncat(amt).forEach(function (x) { markDone(x.id, cat); });
+          toast("Tagged " + (r ? r.categorised : "") + " of " + inr(amt) + " as " + cat);
+        });
+      }
+      var kw = keywordFrom(txn.name);
+      if (kw) return api("add_category_rule", { keyword: kw, category: cat }).then(function (r) { if (r && r.applied) toast("Saved · rule applied to " + r.applied + " more"); });
     }).catch(function (e) { toast("Save failed: " + e.message); });
   }
   function cssEsc(s) { return String(s).replace(/["\\]/g, "\\$&"); }
