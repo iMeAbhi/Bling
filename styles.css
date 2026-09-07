@@ -151,6 +151,14 @@ svg{display:block}
 .splurge .tot .k{font-family:'Fraunces',serif; font-size:30px; font-weight:600}
 .splurge .tot .l{font-size:12px; font-weight:600}
 .flow{font-size:11px; color:var(--ink-faint); margin-top:10px; line-height:1.5}
+.liab{border:1px solid var(--rule); padding:14px 15px; margin-top:10px}
+.liab .lh{display:flex; justify-content:space-between; align-items:flex-start; gap:12px}
+.liab .lh .t{font-size:14px; font-weight:600}
+.liab .lh .t .tab{margin-left:6px}
+.liab .lh .s{font-size:11px; color:var(--ink-soft); margin-top:3px}
+.liab .la{display:flex; flex-direction:column; gap:6px; align-items:flex-end; flex:none}
+.liab .la .use{border:1px solid var(--accent); color:var(--accent); border-radius:4px; padding:7px 12px; font-size:12px; font-weight:700; white-space:nowrap}
+.liab .la .lx{font-size:11px; color:var(--ink-faint); font-weight:600}
 
 /* AI briefing */
 .brief{border:1px solid var(--ink); padding:20px; margin-top:12px; background:var(--paper-2)}

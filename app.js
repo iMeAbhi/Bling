@@ -96,7 +96,11 @@
       { date: "5 Sep", name: "Swiggy", acct: "Eating out", amt: -640 },
       { date: "1 Sep", name: "Salary", acct: "HDFC", amt: 145000 }
     ],
-    accountsList: [{ id: "acc_hdfc", name: "Salary account", type: "bank" }, { id: "acc_cash", name: "Cash", type: "cash" }],
+    accountsList: [{ id: "acc_hdfc", name: "Salary account", type: "bank" }, { id: "acc_cash", name: "Cash", type: "cash" }, { id: "acc_atlas", name: "Atlas card", type: "credit" }, { id: "acc_home", name: "SBI Home Loan", type: "loan" }],
+    liabilities: [
+      { id: "l1", name: "iPhone 15 EMI", type: "emi", lender: "Bajaj Finserv", onAccount: "Atlas card", payFrom: "Salary account", total: 96000, outstanding: 32000, emi: 8000, rate: 0, endDate: "2027-01-05", dueDay: 5, note: "", pct: 67, ended: false },
+      { id: "l2", name: "Home loan", type: "loan", lender: "SBI", onAccount: "SBI Home Loan", payFrom: "Salary account", total: 4500000, outstanding: 3800000, emi: 42300, rate: 8.4, endDate: "2038-06-15", dueDay: 15, note: "", pct: 16, ended: false }
+    ],
     monthly: {
       "2026-04": { spent: 61200, count: 210, cats: { "Eating out": 8200, "Groceries": 9100, "Transport": 4200, "Rent": 17910 } },
       "2026-05": { spent: 58400, count: 198, cats: { "Eating out": 6400, "Groceries": 9800, "Transport": 3800, "Rent": 17910 } },
@@ -132,7 +136,7 @@
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
     screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
-    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All",
+    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All", addingLiab: false, editLiabId: null,
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -450,7 +454,19 @@
         '<div class="rec"><div class="k num serif">' + inr(s.rec) + '</div><div class="l">Suggested</div></div><button class="use" data-act="usecap" data-idx="' + i + '">Use</button></div>';
     }).join("");
     var sp = d.splurge;
-    return '<div class="sec"><span class="tab">Fixed this month</span><span class="more">' + inr(fixedTotal) + ' total</span></div>' + fx +
+    var liabs = d.liabilities || [];
+    var liabRows = liabs.map(function (l) {
+      return '<div class="liab"><div class="lh"><div><div class="t">' + esc(l.name) + ' <span class="tab">' + esc(l.type) + '</span></div>' +
+        '<div class="s">' + esc(l.onAccount) + ' · pay from ' + esc(l.payFrom) + ' · due ' + ordinalJs(l.dueDay) + (l.endDate ? ' · till ' + esc(l.endDate.slice(0, 7)) : "") + '</div></div>' +
+        '<div class="la"><button class="use" data-payemi="' + esc(l.id) + '">Pay EMI</button><button class="lx" data-editliab="' + esc(l.id) + '">Edit</button></div></div>' +
+        '<div class="meter" style="margin-top:9px"><i style="width:' + l.pct + '%;background:var(--accent)"></i></div>' +
+        '<div class="s" style="margin-top:6px">Outstanding <b style="color:var(--ink)">' + inr(l.outstanding) + '</b> of ' + inr(l.total) + ' · EMI ' + inr(l.emi) + '/mo</div></div>';
+    }).join("");
+    var loansSection = '<div class="sec"><span class="tab">Loans & EMIs</span><span class="more" data-act="addLiab">+ Add</span></div>' +
+      (d.answers && d.answers.debtFree && d.answers.debtFree !== "—" ? '<div class="psub" style="padding:2px 0 8px">Debt-free by <b class="serif" style="color:var(--ink)">' + esc(d.answers.debtFree) + '</b>' + (d.answers.debtFreeNote ? " · " + esc(d.answers.debtFreeNote) : "") + '</div>' : "") +
+      (liabs.length ? liabRows : '<div class="psub" style="padding:8px 0">No loans or EMIs yet. Add one — paying an EMI debits your account and reduces the balance in one go, and Bling works out your debt-free date.</div>');
+    return loansSection +
+      '<div class="sec"><span class="tab">Fixed this month</span><span class="more">' + inr(fixedTotal) + ' total</span></div>' + fx +
       '<button class="addbtn" data-act="toast" data-msg="Add fixed expense (demo)">' + icon("plus") + 'Add a fixed expense</button>' +
       '<div class="flow" style="margin-top:4px">A match tags the expense and marks it settled. Tolerance is tunable, and you can re-tag any auto-match if Bling gets it wrong — needs ~3 months of history before it detects patterns on its own.</div>' +
       '<div class="sec"><span class="tab">Bling spotted a pattern</span></div>' + det +
@@ -608,6 +624,32 @@
       '</div></div></div>';
   }
 
+  function liabModal() {
+    var accs = state.data.accountsList || [];
+    var L = state.editLiabId ? (state.data.liabilities || []).filter(function (x) { return String(x.id) === String(state.editLiabId); })[0] : null;
+    var onAccId = ""; if (L) { var oa = accs.filter(function (a) { return a.name === L.onAccount; })[0]; onAccId = oa ? oa.id : ""; }
+    var pfId = ""; if (L) { var pf = accs.filter(function (a) { return a.name === L.payFrom; })[0]; pfId = pf ? pf.id : ""; }
+    var opt = function (list, sel) { return list.map(function (a) { return '<option value="' + esc(a.id) + '"' + (a.id === sel ? " selected" : "") + '>' + esc(a.name) + '</option>'; }).join(""); };
+    var creditLoan = accs.filter(function (a) { return a.type === "credit" || a.type === "loan"; }); if (!creditLoan.length) creditLoan = accs;
+    var banks = accs.filter(function (a) { return a.type === "bank" || a.type === "cash"; }); if (!banks.length) banks = accs;
+    return '<div class="modal"><button class="backdrop" data-act="closeLiab" aria-label="Close"></button><div class="sheet">' +
+      '<div class="mhead"><h2>' + (L ? "Edit" : "Add") + ' loan / EMI</h2><button class="x" data-act="closeLiab" aria-label="Close">✕</button></div>' +
+      '<form data-form="liab">' + (L ? '<input type="hidden" name="id" value="' + esc(L.id) + '">' : "") +
+      '<label class="field"><span>Name (what / vendor)</span><input name="name" required value="' + esc(L ? L.name : "") + '" placeholder="e.g. iPhone EMI, Home loan"></label>' +
+      '<div class="kindtoggle"><label><input type="radio" name="type" value="emi"' + (!L || L.type === "emi" ? " checked" : "") + '> EMI</label><label><input type="radio" name="type" value="loan"' + (L && L.type === "loan" ? " checked" : "") + '> Loan</label></div>' +
+      '<label class="field"><span>Sits on (card / loan account)</span><select name="account">' + opt(creditLoan, onAccId) + '</select></label>' +
+      '<label class="field"><span>Paid from (bank account)</span><select name="payFrom">' + opt(banks, pfId) + '</select></label>' +
+      '<label class="field"><span>Total amount (₹)</span><input name="total" type="number" min="0" value="' + (L ? L.total : "") + '" required></label>' +
+      '<label class="field"><span>Outstanding now (₹)</span><input name="outstanding" type="number" min="0" value="' + (L ? L.outstanding : "") + '" placeholder="defaults to total"></label>' +
+      '<label class="field"><span>Monthly EMI (₹)</span><input name="emi" type="number" min="0" value="' + (L ? L.emi : "") + '" required></label>' +
+      '<label class="field"><span>Due day</span><input name="dueDay" type="number" min="1" max="31" value="' + (L ? L.dueDay : 5) + '"></label>' +
+      '<label class="field"><span>End date</span><input name="endDate" type="date" value="' + (L ? esc(L.endDate) : "") + '"></label>' +
+      '<label class="field"><span>Note (optional)</span><input name="note" value="' + esc(L ? L.note : "") + '" placeholder="lender, rate…"></label>' +
+      '<div style="display:flex;gap:10px;margin-top:18px"><button class="btn" type="submit">' + (L ? "Save" : "Add") + '</button>' +
+      (L ? '<button class="btn ghost" type="button" data-act="deleteLiab" style="border-color:var(--neg);color:var(--neg)">Remove</button>' : "") + '</div>' +
+      '</form></div></div>';
+  }
+
   /* ---------- icons ---------- */
   function icon(n) {
     var i = {
@@ -647,7 +689,7 @@
     var app = document.getElementById("app");
     app.innerHTML = phoneShell(state.data) + webShell(state.data) +
       '<button class="fab" data-act="add" aria-label="Add entry">+</button>' +
-      (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "") + (state.editId ? editModal() : "");
+      (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "") + (state.editId ? editModal() : "") + (state.addingLiab ? liabModal() : "");
     if (state._focusSearch) {
       var pool = document.querySelector(".modal") ? document.querySelectorAll(".modal .txnsearch") : document.querySelectorAll(".txnsearch");
       var s = [].slice.call(pool).filter(function (i) { return i.offsetParent; })[0];
@@ -731,7 +773,7 @@
   }
 
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby]");
+    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby],[data-editliab],[data-payemi]");
     if (!t) return;
     if (t.dataset.go) { state.screen = t.dataset.go; render(); }
     else if (t.dataset.wgo) { state.wboard = t.dataset.wgo; render(); }
@@ -760,7 +802,27 @@
     else if (t.dataset.tedit) { state.editId = t.dataset.tedit; render(); }
     else if (t.dataset.act === "closeEdit") { state.editId = null; render(); }
     else if (t.dataset.act === "deleteTxn") { deleteTxn(); }
+    else if (t.dataset.act === "addLiab") { state.addingLiab = true; state.editLiabId = null; render(); }
+    else if (t.dataset.editliab) { state.editLiabId = t.dataset.editliab; state.addingLiab = true; render(); }
+    else if (t.dataset.act === "closeLiab") { state.addingLiab = false; state.editLiabId = null; render(); }
+    else if (t.dataset.act === "deleteLiab") { deleteLiab(); }
+    else if (t.dataset.payemi) { payEmi(t.dataset.payemi); }
   });
+
+  function payEmi(id) {
+    var l = (state.data.liabilities || []).filter(function (x) { return String(x.id) === String(id); })[0];
+    if (!l) return;
+    if (!connected()) { toast("Pay EMI (demo — connect to save)"); return; }
+    toast("Paying " + inr(l.emi) + "…");
+    api("pay_emi", { id: id }).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
+  function deleteLiab() {
+    var id = state.editLiabId; if (!id) return;
+    state.addingLiab = false; state.editLiabId = null;
+    if (!connected()) { render(); toast("Removed (demo)"); return; }
+    render(); toast("Removing…");
+    api("delete_liability", { id: id }).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
 
   document.addEventListener("input", function (e) {
     var s = e.target.closest(".txnsearch");
@@ -770,6 +832,20 @@
     render();
   });
 
+  function saveLiab(f) {
+    var fd = new FormData(f);
+    if (!Number(fd.get("total")) || !Number(fd.get("emi"))) { toast("Enter total and EMI"); return; }
+    var payload = {
+      id: fd.get("id") || undefined, name: fd.get("name"), type: fd.get("type"),
+      accountId: fd.get("account"), payFromId: fd.get("payFrom"),
+      total: Number(fd.get("total")), outstanding: fd.get("outstanding") ? Number(fd.get("outstanding")) : undefined,
+      emiAmount: Number(fd.get("emi")), dueDay: Number(fd.get("dueDay") || 5), endDate: fd.get("endDate"), note: fd.get("note")
+    };
+    state.addingLiab = false; state.editLiabId = null;
+    if (!connected()) { render(); toast("Saved (demo — connect to persist)"); return; }
+    render(); toast("Saving…");
+    api("upsert_liability", payload).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
   function deleteTxn() {
     var id = state.editId; if (!id) return;
     state.editId = null;
@@ -878,6 +954,8 @@
     if (ef) { e.preventDefault(); addEntry(ef); return; }
     var edf = e.target.closest('form[data-form=edit]');
     if (edf) { e.preventDefault(); saveEdit(edf); return; }
+    var lf = e.target.closest('form[data-form=liab]');
+    if (lf) { e.preventDefault(); saveLiab(lf); return; }
     var f = e.target.closest('form[data-form=conn]');
     if (!f) return;
     e.preventDefault();

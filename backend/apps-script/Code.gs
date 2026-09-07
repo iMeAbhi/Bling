@@ -22,7 +22,8 @@ var CURRENCY = "INR";
 var TABLES = {
   Config: ["key", "value", "note"],
   Accounts: ["id", "name", "institution", "type", "last4", "opening_balance", "balance", "limit", "active", "updated_at"],
-  Transactions: ["id", "date", "merchant", "note", "category", "amount", "account_id", "kind", "source", "status", "source_event_id", "created_at", "updated_at", "deleted_at"],
+  Transactions: ["id", "date", "merchant", "note", "category", "amount", "account_id", "kind", "source", "status", "source_event_id", "created_at", "updated_at", "deleted_at", "destination_account_id"],
+  Liabilities: ["id", "name", "type", "lender", "account_id", "pay_from_id", "total", "outstanding", "emi_amount", "rate", "start_date", "end_date", "due_day", "note", "active", "updated_at"],
   Budgets: ["id", "name", "cap", "group", "created_at", "updated_at"],
   CategoryRules: ["id", "keywords", "category", "priority", "active", "updated_at"],
   Recurring: ["id", "name", "category", "amount", "account_id", "due_day", "cadence", "status", "tolerance_pct", "settled_month", "active", "updated_at"],
@@ -131,6 +132,9 @@ function doPost(e) {
         case "set_txn_category": return json_({ ok: true, data: setTxnCategory_(payload) });
         case "add_category_rule": return json_({ ok: true, data: addCategoryRule_(payload) });
         case "categorize_amount": return json_({ ok: true, data: categorizeAmount_(payload) });
+        case "upsert_liability": return json_({ ok: true, data: upsertLiability_(payload) });
+        case "delete_liability": return json_({ ok: true, data: deleteLiability_(payload.id) });
+        case "pay_emi": return json_({ ok: true, data: payEmi_(payload) });
         default: throw new Error("Unknown action: " + action);
       }
     } finally {
@@ -225,11 +229,29 @@ function buildSnapshot_() {
     };
   });
   var fixedTotal = fixed.reduce(function (s, f) { return s + f.amt; }, 0);
+  var mmm = Utilities.formatDate(new Date(), tz, "MMM"), todayD = new Date();
   var upcoming = recurring.filter(function (r) { return String(r.settled_month) !== monthKey; })
-    .sort(function (a, b) { return Number(a.due_day) - Number(b.due_day); })
-    .map(function (r) {
-      return { date: ordinal_(r.due_day) + " " + Utilities.formatDate(new Date(), tz, "MMM"), name: r.name, acct: acctName_(accounts, r.account_id) || "", amt: -Math.abs(num_(r.amount)) };
-    });
+    .map(function (r) { return { date: ordinal_(r.due_day) + " " + mmm, day: Number(r.due_day), name: r.name, acct: acctName_(accounts, r.account_id) || "", amt: -Math.abs(num_(r.amount)) }; });
+
+  /* Loans & EMIs — only active, not past end date, still owing */
+  var liabsRaw = readObjects_("Liabilities").filter(function (l) { return truthy_(l.active); });
+  var liabilities = liabsRaw.map(function (l) {
+    var ended = l.end_date && new Date(l.end_date) < todayD;
+    var total = num_(l.total) || 1;
+    return {
+      id: String(l.id), name: String(l.name), type: String(l.type), lender: String(l.lender || ""),
+      onAccount: acctName_(accounts, l.account_id) || "", payFrom: acctName_(accounts, l.pay_from_id) || "",
+      total: num_(l.total), outstanding: num_(l.outstanding), emi: num_(l.emi_amount), rate: num_(l.rate),
+      endDate: String(l.end_date || ""), dueDay: Number(l.due_day || 1), note: String(l.note || ""),
+      pct: Math.min(100, Math.round((1 - num_(l.outstanding) / total) * 100)), ended: !!ended
+    };
+  });
+  var activeEmis = liabilities.filter(function (l) { return !l.ended && l.outstanding > 0.5 && l.emi > 0; });
+  activeEmis.forEach(function (l) { upcoming.push({ date: ordinal_(l.dueDay) + " " + mmm, day: l.dueDay, name: "EMI · " + l.name, acct: l.payFrom, amt: -l.emi }); });
+  upcoming.sort(function (a, b) { return (a.day || 0) - (b.day || 0); });
+  /* debt-free = latest end date among active EMIs/loans still owing */
+  var endDates = activeEmis.map(function (l) { return l.endDate; }).filter(Boolean).sort();
+  var debtFree = endDates.length ? Utilities.formatDate(new Date(endDates[endDates.length - 1]), tz, "MMM yyyy") : (activeEmis.length ? "—" : "Debt-free");
 
   /* splurge / safe-to-spend */
   var takehome = num_(getConfig_("takehome")) || 0;
@@ -243,7 +265,7 @@ function buildSnapshot_() {
     stale: "",
     netWorth: netWorth, deltaMonth: 0, deltaPct: 0,
     liquid: liquid, invested: invested, owed: owed,
-    answers: { safeToday: Math.max(0, safeToday), debtFree: getConfig_("debt_free") || "—", debtFreeNote: "", runway: runway_(liquid, monthSpent), runwayNote: "liquid ÷ monthly spend", cardBill: cardBill_(accounts) },
+    answers: { safeToday: Math.max(0, safeToday), debtFree: debtFree, debtFreeNote: activeEmis.length ? activeEmis.length + " active loans/EMIs" : "", runway: runway_(liquid, monthSpent), runwayNote: "liquid ÷ monthly spend", cardBill: cardBill_(accounts) },
     allocation: allocation,
     emergency: emergency_(liquid, monthSpent, getConfig_),
     upcoming: upcoming,
@@ -252,6 +274,7 @@ function buildSnapshot_() {
     month: { spent: monthSpent, budget: budget, left: Math.max(0, budget - monthSpent), daysLeft: daysLeft, projected: projected, avgDay: dayOfMonth ? Math.round(monthSpent / dayOfMonth) : 0, cats: cats, alert: overCapAlert_(cats) },
     year: yearSummary_(txns, tz),
     caps: budgets.map(function (b) { return { name: String(b.name), cap: num_(b.cap) }; }),
+    liabilities: liabilities,
     fixed: fixed,
     detects: detectPatterns_(txns, recurring, accounts, tz),
     suggest: suggestBudgets_(txns, budgets, tz),
@@ -694,7 +717,8 @@ function upsertTransaction_(p) {
     account_id: String(accId), kind: String(p.kind || (num_(p.amount) >= 0 ? "income" : "expense")),
     source: String(p.source || "manual"), status: String(p.status || "confirmed"),
     source_event_id: String(p.sourceEventId || p.source_event_id || ""),
-    created_at: existing ? existing.object.created_at : now, updated_at: now, deleted_at: ""
+    created_at: existing ? existing.object.created_at : now, updated_at: now, deleted_at: "",
+    destination_account_id: String(p.destinationAccountId || p.destination_account_id || (existing ? existing.object.destination_account_id : "") || "")
   };
   upsertObject_("Transactions", "id", row);
   recalcBalances_();
@@ -721,12 +745,54 @@ function upsertAccount_(p) {
   return row;
 }
 
+/* =================================================================
+   Loans & EMIs (Liabilities)
+   ================================================================= */
+function upsertLiability_(p) {
+  var id = safeId_(p.id || id_("liab"));
+  var existing = findObject_("Liabilities", "id", id);
+  var total = num_(p.total);
+  var row = {
+    id: id, name: clean_(p.name || "Loan", 120), type: String(p.type || "loan"), lender: clean_(p.lender || "", 120),
+    account_id: String(p.accountId || p.account_id || ""), pay_from_id: String(p.payFromId || p.pay_from_id || ""),
+    total: total, outstanding: p.outstanding != null ? num_(p.outstanding) : (existing ? num_(existing.object.outstanding) : total),
+    emi_amount: num_(p.emiAmount || p.emi_amount), rate: num_(p.rate), start_date: String(p.startDate || p.start_date || ""),
+    end_date: String(p.endDate || p.end_date || ""), due_day: Number(p.dueDay || p.due_day || 1), note: clean_(p.note || "", 200),
+    active: true, updated_at: nowIso_()
+  };
+  if (row.account_id) requireObject_("Accounts", "id", row.account_id);
+  if (row.pay_from_id) requireObject_("Accounts", "id", row.pay_from_id);
+  upsertObject_("Liabilities", "id", row);
+  return row;
+}
+function deleteLiability_(id) { var f = requireObject_("Liabilities", "id", id); writeObjectAt_("Liabilities", f.rowIndex, Object.assign({}, f.object, { active: false, updated_at: nowIso_() })); return { id: id, deleted: true }; }
+/* pay one EMI: single transaction that debits pay_from and reduces the liability
+   account (CC/loan) balance; then reduces outstanding. */
+function payEmi_(p) {
+  var f = requireObject_("Liabilities", "id", p.id), L = f.object;
+  var amt = Math.abs(num_(p.amount || L.emi_amount));
+  if (!amt) throw new Error("no EMI amount");
+  var txn = null;
+  if (L.pay_from_id) {
+    txn = upsertTransaction_({
+      date: p.date || nowIso_(), merchant: "EMI · " + L.name, note: L.lender || "", category: "EMI / Loan",
+      amount: -amt, accountId: L.pay_from_id, destinationAccountId: L.account_id || "", kind: "emi_payment", source: "manual", status: "confirmed"
+    });
+  }
+  var newOut = Math.max(0, num_(L.outstanding) - amt);
+  writeObjectAt_("Liabilities", f.rowIndex, Object.assign({}, L, { outstanding: newOut, active: newOut > 0.5, updated_at: nowIso_() }));
+  return { id: p.id, outstanding: newOut, transaction: txn ? txn.id : "" };
+}
+
 /* balances = opening + sum(transactions) per account */
 function recalcBalances() { ensureInstalled_(); recalcBalances_(); SpreadsheetApp.getActiveSpreadsheet().toast("Balances recalculated.", "Bling", 4); }
 function recalcBalances_() {
   var txns = readObjects_("Transactions").filter(function (t) { return !t.deleted_at; });
   var sums = {};
-  txns.forEach(function (t) { sums[String(t.account_id)] = (sums[String(t.account_id)] || 0) + num_(t.amount); });
+  txns.forEach(function (t) {
+    sums[String(t.account_id)] = (sums[String(t.account_id)] || 0) + num_(t.amount);
+    if (t.destination_account_id) sums[String(t.destination_account_id)] = (sums[String(t.destination_account_id)] || 0) - num_(t.amount);  // money leaves source, lands in destination
+  });
   var accounts = readObjects_("Accounts");
   accounts.forEach(function (a, i) {
     var bal = num_(a.opening_balance) + (sums[String(a.id)] || 0);
