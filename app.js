@@ -173,7 +173,7 @@
       return '<div class="ab"><span class="nm">' + esc(x.name) + '</span><span class="track"><i style="width:' + x.pct + '%;background:' + x.color + '"></i></span><span class="pc num">' + x.pct + '%</span></div>';
     }).join("");
   }
-  var CATS = ["Eating out", "Groceries", "Transport", "Shopping", "Bills & utilities", "Entertainment", "Health", "Investments", "Income", "Other"];
+  var CATS = ["Rent", "EMI / Loan", "Bills & utilities", "Subscriptions", "Eating out", "Groceries", "Transport", "Shopping", "Entertainment", "Health", "Investments", "Income", "Transfer", "Other"];
   function uncatList() { return (state.data.allTxns || []).filter(function (t) { var c = String(t.cat || "").toLowerCase(); return !c || c === "uncategorized"; }); }
   function keywordFrom(name) {
     var toks = String(name || "").toLowerCase().split(/[^a-z]+/).filter(function (s) { return s.length >= 4 && ["upir", "upi", "tfr", "wdl", "hdfc", "icic", "sbin", "yesb", "utib", "paid", "bank"].indexOf(s) === -1; });
@@ -667,7 +667,7 @@
     var fd = new FormData(f);
     var amt = Number(fd.get("amount") || 0); if (!amt || amt <= 0) { toast("Enter an amount"); return; }
     var kind = String(fd.get("kind") || "expense");
-    var payload = { id: id, amount: kind === "income" ? Math.abs(amt) : -Math.abs(amt), category: String(fd.get("category")), merchant: t.name, kind: kind, source: "manual" };
+    var payload = { id: id, amount: kind === "income" ? Math.abs(amt) : -Math.abs(amt), category: String(fd.get("category")), merchant: t.name, accountId: t.accId || undefined, kind: kind, source: t.source || "manual" };
     state.editId = null;
     if (!connected()) { render(); toast("Saved (demo — connect to persist)"); return; }
     render(); toast("Saving…");

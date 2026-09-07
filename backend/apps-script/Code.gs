@@ -198,7 +198,7 @@ function buildSnapshot_() {
   });
   // full list (capped) so the app can show recent transactions and filter client-side
   var allTxns = sorted.slice(0, 1500).map(function (t) {
-    return { id: String(t.id), iso: new Date(t.date).toISOString(), date: shortDate_(t.date, tz), name: t.merchant || t.category || "—", cat: String(t.category || ""), acct: acctName_(accounts, t.account_id) || t.source || "", amt: num_(t.amount) };
+    return { id: String(t.id), iso: new Date(t.date).toISOString(), date: shortDate_(t.date, tz), name: t.merchant || t.category || "—", cat: String(t.category || ""), acct: acctName_(accounts, t.account_id) || t.source || "", accId: String(t.account_id || ""), amt: num_(t.amount) };
   });
   // per-month aggregates over ALL transactions (so month/year figures stay correct
   // even for history older than the raw list cap — UPI users blow past 1500 fast)
@@ -327,33 +327,52 @@ function agoShort_(iso) {
 /* =================================================================
    Pattern detection — surfaces "you keep paying X, mark it?"
    ================================================================= */
+/* Extract the payee name from a UPI/bank narration.
+   "WDL TFR UPI/DR/642815416869/SHIVAM/SBIN/8249085323/Paid" -> "Shivam"
+   "...DR/624575596173/ZOMATO/HDFC/payzomato@/UPI"          -> "Zomato"
+   "DEBIT ACHDr YESB00709000028661 ZERODHA BROKIN"           -> "Zerodha" */
+var NARR_NOISE = /^(WDL|TFR|UPI|DR|CR|ACH|ACHD|ACHDR|NEFT|IMPS|RTGS|DEBIT|CREDIT|PAID|RENT|BANK|LTD|PVT|INDIA|SBIN|HDFC|ICIC|YESB|UTIB|AXIS|KKBK|PYTM|BROKIN|CLEARIN|PAYMENT|TRANSFER)$/i;
+function payeeOf_(name) {
+  var s = String(name || "");
+  var m = s.match(/\b\d{6,}\b[\/ ]+([A-Za-z][A-Za-z]{2,20})/);   // token right after the long reference number
+  if (m && !NARR_NOISE.test(m[1])) return m[1];
+  var toks = s.split(/[^A-Za-z]+/).filter(function (t) { return t.length >= 4 && !NARR_NOISE.test(t); });
+  toks.sort(function (a, b) { return b.length - a.length; });
+  return toks[0] || (s.slice(0, 16) || "payment");
+}
+function median_(arr) { if (!arr.length) return 0; var a = arr.slice().sort(function (x, y) { return x - y; }); return a[Math.floor(a.length / 2)]; }
 function detectPatterns_(txns, recurring, accounts, tz) {
-  var known = {};
-  recurring.forEach(function (r) { known[normMerchant_(r.name)] = true; known[normMerchant_(r.category)] = true; });
-  // group outflows by (rounded amount + normalised merchant), count distinct months
+  // skip amounts already covered by a Recurring fingerprint
+  function covered(a) { return recurring.some(function (r) { var tol = (num_(r.tolerance_pct) || 2) / 100, e = num_(r.amount); return e && Math.abs(a - e) <= e * tol; }); }
+  // group by (amount rounded to ₹10 + account): the strong signal for rent/EMI is the
+  // fixed amount recurring monthly, even when the payee text varies each time.
   var groups = {};
   txns.forEach(function (t) {
     var amt = num_(t.amount); if (amt >= 0 || t.kind === "transfer") return;
-    var merch = normMerchant_(t.merchant || t.category);
-    if (!merch || known[merch]) return;
-    var key = merch + "|" + Math.round(Math.abs(amt) / 50) * 50;
-    var mk = dateKey_(t.date, tz, "yyyy-MM");
-    (groups[key] = groups[key] || { merch: merch, raw: t.merchant || t.category, amt: Math.abs(amt), months: {}, acct: t.account_id, day: Number(dateKey_(t.date, tz, "d")) }).months[mk] = true;
+    var a = Math.abs(amt); if (a < 300) return;
+    if (covered(a)) return;
+    var key = (Math.round(a / 10) * 10) + "|" + t.account_id;
+    var g = groups[key] || (groups[key] = { amt: a, acct: t.account_id, months: {}, days: [], payees: {} });
+    g.months[dateKey_(t.date, tz, "yyyy-MM")] = true;
+    g.days.push(Number(dateKey_(t.date, tz, "d")));
+    var p = payeeOf_(t.merchant || t.category); g.payees[p] = (g.payees[p] || 0) + 1;
   });
   var out = [];
   Object.keys(groups).forEach(function (k) {
     var g = groups[k], n = Object.keys(g.months).length;
-    if (n >= 3 && out.length < 4) {
-      var isSub = g.amt < 2000;
-      out.push({
-        pick: isSub ? "Subscription" : "Rent",
-        yes: isSub ? "Track" : "Mark",
-        recurring: { name: titleCase_(g.merch), amount: g.amt, account_id: g.acct, due_day: g.day || 1, category: isSub ? "Subscription" : "Fixed" },
-        text: "A payment of <b>" + inrPlain_(g.amt) + "</b> to <span class=\"raw\">" + esc_(g.raw).slice(0, 22) + "</span> has recurred for <b>" + n + " months</b>. " + (isSub ? "Track as a subscription?" : "Mark as a fixed expense?")
-      });
-    }
+    if (n < 3 || out.length >= 6) return;
+    var payee = Object.keys(g.payees).sort(function (a, b) { return g.payees[b] - g.payees[a]; })[0] || "payment";
+    payee = titleCase_(payee.toLowerCase());
+    var day = median_(g.days) || 1, isSub = g.amt < 2000;
+    out.push({
+      pick: isSub ? "Subscription" : payee,
+      yes: isSub ? "Track" : "Mark",
+      recurring: { name: payee, amount: g.amt, account_id: g.acct, due_day: day, category: isSub ? "Subscription" : "Fixed", tolerance_pct: 1 },
+      text: "A payment of <b>" + inrPlain_(g.amt) + "</b> to <span class=\"raw\">" + esc_(payee) + "</span> has recurred <b>" + n + " months</b> (around the " + ordinal_(day) + "). " + (isSub ? "Track as a subscription?" : "Mark it as a fixed expense?")
+    });
   });
-  return out;
+  // most-recurring first
+  return out.sort(function (a, b) { return b.recurring.amount - a.recurring.amount; });
 }
 function normMerchant_(s) { return String(s || "").toLowerCase().replace(/[^a-z]/g, "").slice(0, 14); }
 function titleCase_(s) { return String(s || "").replace(/^\w/, function (c) { return c.toUpperCase(); }); }
