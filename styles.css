@@ -219,6 +219,10 @@ svg{display:block}
 .field select{width:100%; padding:12px 13px; border:1px solid var(--rule); background:var(--paper-2); color:var(--ink); font:inherit; font-size:14px; border-radius:4px}
 .txnsearch{width:100%; margin-top:12px; padding:11px 13px; border:1px solid var(--rule); background:var(--paper-2); color:var(--ink); font:inherit; font-size:13px; border-radius:4px}
 .txnsearch:focus{outline:2px solid var(--accent); outline-offset:0}
+.tchips{display:flex; flex-wrap:wrap; gap:6px; margin-top:14px}
+.tchips button{border:1px solid var(--rule); border-radius:999px; padding:6px 12px; font-size:12px; font-weight:600; color:var(--ink-soft)}
+.tchips button.on{background:var(--ink); color:var(--paper); border-color:var(--ink)}
+[data-theme=dark] .tchips button.on{background:var(--accent); color:#0d1712; border-color:var(--accent)}
 .li[data-tedit]:active, .w-tbl .tr[data-tedit]:hover{background:var(--paper-2)}
 
 /* boot */
