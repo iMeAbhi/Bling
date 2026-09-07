@@ -100,7 +100,8 @@
       { iso: new Date().toISOString(), date: "7 Sep", name: "Rapido", cat: "Transport", acct: "HDFC", amt: -142 },
       { iso: new Date().toISOString(), date: "7 Sep", name: "Blinkit", cat: "Groceries", acct: "HDFC", amt: -1240 },
       { iso: new Date(Date.now() - 2 * 864e5).toISOString(), date: "5 Sep", name: "Swiggy", cat: "Eating out", acct: "HDFC", amt: -640 },
-      { iso: new Date(Date.now() - 6 * 864e5).toISOString(), date: "1 Sep", name: "Salary", cat: "Income", acct: "HDFC", amt: 145000 }
+      { iso: new Date(Date.now() - 6 * 864e5).toISOString(), date: "1 Sep", name: "Salary", cat: "Income", acct: "HDFC", amt: 145000 },
+      { id: "demo_u1", iso: new Date().toISOString(), date: "7 Sep", name: "WDL TFR UPI/DR/6367/MOKOBAR", cat: "Uncategorized", acct: "HDFC", amt: -420 }
     ],
     predict: {
       brief: { head: "Three big dues land in the same week.", body: "Rent, the Atlas card bill and your home-loan EMI all fall between the 3rd and 15th — <b>₹84,780</b> before your salary clears on the 1st. Move ₹20,000 from Rainy-day now and you stay above buffer." },
@@ -119,6 +120,7 @@
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
     screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
+    reviewing: false, makeRules: true, doneIds: {},
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -168,6 +170,13 @@
     return a.map(function (x) {
       return '<div class="ab"><span class="nm">' + esc(x.name) + '</span><span class="track"><i style="width:' + x.pct + '%;background:' + x.color + '"></i></span><span class="pc num">' + x.pct + '%</span></div>';
     }).join("");
+  }
+  var CATS = ["Eating out", "Groceries", "Transport", "Shopping", "Bills & utilities", "Entertainment", "Health", "Investments", "Income", "Other"];
+  function uncatList() { return (state.data.allTxns || []).filter(function (t) { var c = String(t.cat || "").toLowerCase(); return !c || c === "uncategorized"; }); }
+  function keywordFrom(name) {
+    var toks = String(name || "").toLowerCase().split(/[^a-z]+/).filter(function (s) { return s.length >= 4 && ["upir", "upi", "tfr", "wdl", "hdfc", "icic", "sbin", "yesb", "utib", "paid", "bank"].indexOf(s) === -1; });
+    toks.sort(function (a, b) { return b.length - a.length; });
+    return toks[0] || "";
   }
   // filter the full transaction list to a period, client-side
   function txnsFor(period) {
@@ -255,6 +264,7 @@
       '<div class="seg"><button class="' + (state.spendMode === "track" ? "on" : "") + '" data-mode="track">Track spending</button><button class="' + (state.spendMode === "plan" ? "on" : "") + '" data-mode="plan">Fixed & budgets</button></div>' +
       /* TRACK */
       '<div class="mv' + (state.spendMode === "track" ? " on" : "") + '" data-m="track">' +
+      (uncatList().length ? '<div class="reviewbar"><div><div class="t">' + uncatList().length + ' uncategorised</div><div class="s">Assign them so budgets & patterns work</div></div><button data-act="review">Review</button></div>' : "") +
       '<div class="period">' + ["today", "week", "month", "year"].map(function (p) {
         return '<button class="' + (state.period === p ? "on" : "") + '" data-period="' + p + '">' + p.charAt(0).toUpperCase() + p.slice(1) + '</button>';
       }).join("") + '</div>' +
@@ -498,7 +508,22 @@
     var meta = document.querySelector('meta[name=theme-color]');
     if (meta) meta.setAttribute("content", state.theme === "dark" ? "#17150F" : "#F6F2E9");
     var app = document.getElementById("app");
-    app.innerHTML = phoneShell(state.data) + webShell(state.data);
+    app.innerHTML = phoneShell(state.data) + webShell(state.data) + (state.reviewing ? reviewModal() : "");
+  }
+
+  function reviewModal() {
+    var list = uncatList().slice(0, 40);
+    var rows = list.map(function (t, i) {
+      var done = state.doneIds[t.id];
+      var chips = CATS.map(function (c) { return '<button data-cat="' + esc(c) + '" data-tid="' + esc(t.id) + '">' + esc(c) + '</button>'; }).join("");
+      return '<div class="ureview' + (done ? " done" : "") + '" data-row="' + esc(t.id) + '"><div class="top"><span class="n">' + esc(t.name) + '</span><span class="a num ' + (t.amt >= 0 ? "pos" : "neg") + '">' + (t.amt >= 0 ? "+" : "−") + inr(Math.abs(t.amt)) + '</span></div>' +
+        (done ? '<div class="set">✓ ' + esc(done) + '</div>' : '<div class="chips">' + chips + '</div>') + '</div>';
+    }).join("");
+    return '<div class="modal"><button class="backdrop" data-act="closeReview" aria-label="Close"></button><div class="sheet">' +
+      '<div class="mhead"><h2>Categorise</h2><button class="x" data-act="closeReview" aria-label="Close">✕</button></div>' +
+      '<label class="remember"><input type="checkbox" data-act="toggleRules"' + (state.makeRules ? " checked" : "") + '> Remember similar merchants (create a keyword rule)</label>' +
+      (list.length ? rows : '<div class="psub" style="padding:16px 0">All caught up — nothing uncategorised.</div>') +
+      '</div></div>';
   }
 
   /* ---------- interactions ---------- */
@@ -512,7 +537,7 @@
   }
 
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wgo],[data-theme-set]");
+    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat]");
     if (!t) return;
     if (t.dataset.go) { state.screen = t.dataset.go; render(); }
     else if (t.dataset.wgo) { state.wboard = t.dataset.wgo; render(); }
@@ -529,7 +554,28 @@
     else if (t.dataset.act === "scan") { doScan(); }
     else if (t.dataset.act === "monthPrev") { state.monthOffset -= 1; render(); }
     else if (t.dataset.act === "monthNext") { if (state.monthOffset < 0) { state.monthOffset += 1; render(); } }
+    else if (t.dataset.act === "review") { state.reviewing = true; render(); }
+    else if (t.dataset.act === "closeReview") { state.reviewing = false; render(); }
+    else if (t.dataset.act === "toggleRules") { state.makeRules = !state.makeRules; }
+    else if (t.dataset.cat && t.dataset.tid) { doCategorize(t.dataset.tid, t.dataset.cat); }
   });
+
+  function doCategorize(id, cat) {
+    // reflect locally right away
+    var txn = (state.data.allTxns || []).filter(function (x) { return String(x.id) === String(id); })[0];
+    if (txn) txn.cat = cat;
+    state.doneIds[id] = cat;
+    // update the done row in place without full re-render (keeps scroll position)
+    var row = document.querySelector('.ureview[data-row="' + cssEsc(id) + '"]');
+    if (row) { row.classList.add("done"); var chips = row.querySelector(".chips"); if (chips) chips.remove(); var s = document.createElement("div"); s.className = "set"; s.textContent = "✓ " + cat; row.appendChild(s); }
+    if (!connected()) { toast("Categorised (demo — connect to save)"); return; }
+    api("set_txn_category", { id: id, category: cat }).then(function () {
+      if (state.makeRules && txn) { var kw = keywordFrom(txn.name); if (kw) return api("add_category_rule", { keyword: kw, category: cat }); }
+    }).then(function (r) {
+      if (r && r.applied) toast("Saved · rule applied to " + r.applied);
+    }).catch(function (e) { toast("Save failed: " + e.message); });
+  }
+  function cssEsc(s) { return String(s).replace(/["\\]/g, "\\$&"); }
 
   function connected() { return state.connection.endpoint && state.connection.token; }
   function needSheet() { toast("Connect your Sheet first (You → Your Sheet)"); }

@@ -181,6 +181,31 @@ svg{display:block}
 .nav .u{width:16px; height:2px; background:var(--accent); opacity:0; border-radius:2px; transition:opacity var(--dur)}
 .nav button.on .u{opacity:1}
 
+/* review banner + modal */
+.reviewbar{display:flex; justify-content:space-between; align-items:center; border:1px solid var(--rule); border-left:3px solid var(--warn); background:var(--paper-2); padding:12px 14px; margin-top:14px}
+.reviewbar .t{font-size:13px; font-weight:600}
+.reviewbar .s{font-size:11px; color:var(--ink-soft); margin-top:2px}
+.reviewbar button{border:1px solid var(--ink); padding:8px 14px; font-size:12px; font-weight:700; border-radius:4px; white-space:nowrap}
+.modal{position:fixed; inset:0; z-index:80; display:flex; flex-direction:column; justify-content:flex-end}
+.modal .backdrop{position:absolute; inset:0; background:rgba(20,18,12,.5)}
+.modal .sheet{position:relative; background:var(--paper); border-top:1.5px solid var(--ink); border-radius:16px 16px 0 0; max-height:86vh; overflow:auto; padding:20px 20px calc(20px + env(safe-area-inset-bottom)); max-width:560px; width:100%; margin:0 auto; animation:rise .28s var(--ease)}
+@media(min-width:1024px){ .modal{justify-content:center; align-items:center} .modal .sheet{border-radius:14px; border:1.5px solid var(--ink); max-height:80vh} }
+.modal .mhead{display:flex; justify-content:space-between; align-items:baseline; border-bottom:1.5px solid var(--ink); padding-bottom:12px; margin-bottom:6px}
+.modal .mhead h2{font-family:'Fraunces',serif; font-size:20px; font-weight:600}
+.modal .mhead .x{font-size:22px; color:var(--ink-soft); padding:2px 8px}
+.remember{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-soft); padding:12px 0}
+.remember input{width:16px; height:16px; accent-color:var(--accent)}
+.ureview{padding:14px 0; border-bottom:1px solid var(--rule)}
+.ureview .top{display:flex; justify-content:space-between; align-items:baseline}
+.ureview .top .n{font-size:13.5px; font-weight:600; max-width:70%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.ureview .top .a{font-size:14px; font-weight:600}
+.ureview .chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:9px}
+.ureview .chips button{border:1px solid var(--rule); border-radius:999px; padding:6px 11px; font-size:12px; font-weight:600; color:var(--ink-soft)}
+.ureview .chips button:hover{border-color:var(--accent); color:var(--accent)}
+.ureview.done{opacity:.5}
+.ureview.done .chips{display:none}
+.ureview .set{font-size:11px; color:var(--accent); font-weight:700; margin-top:8px}
+
 /* boot */
 .boot{display:grid; place-items:center; height:100vh; color:var(--ink-faint); font-size:13px}
 

@@ -128,6 +128,8 @@ function doPost(e) {
         case "confirm_transaction": return json_({ ok: true, data: confirmTransaction_(payload.id) });
         case "scan_gmail": return json_({ ok: true, data: syncGmailAlerts_() });
         case "auto_categorize": return json_({ ok: true, data: autoCategorize_() });
+        case "set_txn_category": return json_({ ok: true, data: setTxnCategory_(payload) });
+        case "add_category_rule": return json_({ ok: true, data: addCategoryRule_(payload) });
         default: throw new Error("Unknown action: " + action);
       }
     } finally {
@@ -196,7 +198,7 @@ function buildSnapshot_() {
   });
   // full list (capped) so the app can show every transaction and filter by period client-side
   var allTxns = sorted.slice(0, 800).map(function (t) {
-    return { iso: new Date(t.date).toISOString(), date: shortDate_(t.date, tz), name: t.merchant || t.category || "—", cat: String(t.category || ""), acct: acctName_(accounts, t.account_id) || t.source || "", amt: num_(t.amount) };
+    return { id: String(t.id), iso: new Date(t.date).toISOString(), date: shortDate_(t.date, tz), name: t.merchant || t.category || "—", cat: String(t.category || ""), acct: acctName_(accounts, t.account_id) || t.source || "", amt: num_(t.amount) };
   });
   var todayEntries = txns.filter(function (t) { return dateKey_(t.date, tz, "yyyy-MM-dd") === todayKey; })
     .map(function (t) { return { time: Utilities.formatDate(new Date(t.date), tz, "h:mma").toLowerCase(), name: t.merchant || t.category, cat: t.category || t.source, amt: num_(t.amount) }; });
@@ -560,6 +562,32 @@ function seedCategoryRules_() {
     { id: "cat_health", keywords: "pharmeasy,1mg,apollo,netmeds,practo,cult,healthify,hospital,clinic", category: "Health", priority: 8, active: true, updated_at: now },
     { id: "cat_invest", keywords: "zerodha,groww,coin,mutual,sip,indmoney,kuvera,smallcase", category: "Investments", priority: 7, active: true, updated_at: now }
   ].forEach(function (r) { if (!findObject_("CategoryRules", "id", r.id)) appendObject_("CategoryRules", r); });
+}
+/* app: set one transaction's category (from the review UI) */
+function setTxnCategory_(p) {
+  var f = requireObject_("Transactions", "id", p.id);
+  var cat = clean_(p.category, 100);
+  if (!cat) throw new Error("category required");
+  writeObjectAt_("Transactions", f.rowIndex, Object.assign({}, f.object, { category: cat, status: "confirmed", updated_at: nowIso_() }));
+  return { id: p.id, category: cat };
+}
+/* app: add a keyword rule (merged into that category), then apply it everywhere */
+function addCategoryRule_(p) {
+  var kw = clean_(String(p.keyword || "").toLowerCase(), 80), cat = clean_(p.category, 60);
+  if (!kw || !cat) throw new Error("keyword and category required");
+  var rules = readObjects_("CategoryRules");
+  var same = null;
+  for (var i = 0; i < rules.length; i++) if (String(rules[i].category).toLowerCase() === cat.toLowerCase()) { same = rules[i]; break; }
+  if (same) {
+    var f = findObject_("CategoryRules", "id", same.id);
+    var kws = String(f.object.keywords || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    if (kws.indexOf(kw) === -1) kws.push(kw);
+    writeObjectAt_("CategoryRules", f.rowIndex, Object.assign({}, f.object, { keywords: kws.join(","), updated_at: nowIso_() }));
+  } else {
+    appendObject_("CategoryRules", { id: id_("cat"), keywords: kw, category: cat, priority: 10, active: true, updated_at: nowIso_() });
+  }
+  var applied = autoCategorize_();
+  return { keyword: kw, category: cat, applied: applied.categorised };
 }
 /* menu: write categories onto every Uncategorized transaction that matches a rule */
 function autoCategorize() {
