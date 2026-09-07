@@ -180,8 +180,13 @@ function buildSnapshot_() {
   });
   var capsTotal = cats.reduce(function (s, c) { return s + c.cap; }, 0);
 
-  var recent = txns.slice().sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); }).slice(0, 8).map(function (t) {
+  var sorted = txns.slice().sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  var recent = sorted.slice(0, 8).map(function (t) {
     return { date: shortDate_(t.date, tz), name: t.merchant || t.category || "—", acct: acctName_(accounts, t.account_id) || t.source || "", amt: num_(t.amount) };
+  });
+  // full list (capped) so the app can show every transaction and filter by period client-side
+  var allTxns = sorted.slice(0, 800).map(function (t) {
+    return { iso: new Date(t.date).toISOString(), date: shortDate_(t.date, tz), name: t.merchant || t.category || "—", cat: String(t.category || ""), acct: acctName_(accounts, t.account_id) || t.source || "", amt: num_(t.amount) };
   });
   var todayEntries = txns.filter(function (t) { return dateKey_(t.date, tz, "yyyy-MM-dd") === todayKey; })
     .map(function (t) { return { time: Utilities.formatDate(new Date(t.date), tz, "h:mma").toLowerCase(), name: t.merchant || t.category, cat: t.category || t.source, amt: num_(t.amount) }; });
@@ -228,6 +233,7 @@ function buildSnapshot_() {
     splurge: { takehome: takehome, fixed: fixedTotal, caps: capsTotal, buffer: buffer, sip: sip, free: free },
     invest: investSummary_(accounts, allocation),
     recent: recent,
+    allTxns: allTxns,
     predict: { brief: { head: "", body: "" }, nextMonth: fixedTotal + capsTotal, cardBill: cardBill_(accounts), cashflowBefore: fixedTotal, cashflowBuffer: buffer },
     sync: syncHealth_()
   };

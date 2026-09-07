@@ -96,6 +96,12 @@
       { date: "5 Sep", name: "Swiggy", acct: "Eating out", amt: -640 },
       { date: "1 Sep", name: "Salary", acct: "HDFC", amt: 145000 }
     ],
+    allTxns: [
+      { iso: new Date().toISOString(), date: "7 Sep", name: "Rapido", cat: "Transport", acct: "HDFC", amt: -142 },
+      { iso: new Date().toISOString(), date: "7 Sep", name: "Blinkit", cat: "Groceries", acct: "HDFC", amt: -1240 },
+      { iso: new Date(Date.now() - 2 * 864e5).toISOString(), date: "5 Sep", name: "Swiggy", cat: "Eating out", acct: "HDFC", amt: -640 },
+      { iso: new Date(Date.now() - 6 * 864e5).toISOString(), date: "1 Sep", name: "Salary", cat: "Income", acct: "HDFC", amt: 145000 }
+    ],
     predict: {
       brief: { head: "Three big dues land in the same week.", body: "Rent, the Atlas card bill and your home-loan EMI all fall between the 3rd and 15th — <b>₹84,780</b> before your salary clears on the 1st. Move ₹20,000 from Rainy-day now and you stay above buffer." },
       nextMonth: 134000, cardBill: 162600, cashflowBefore: 84780, cashflowBuffer: 20000
@@ -112,7 +118,7 @@
   var cached = null;
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
-    screen: "home", spendMode: "track", period: "month", wboard: "overview",
+    screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview",
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -162,6 +168,27 @@
     return a.map(function (x) {
       return '<div class="ab"><span class="nm">' + esc(x.name) + '</span><span class="track"><i style="width:' + x.pct + '%;background:' + x.color + '"></i></span><span class="pc num">' + x.pct + '%</span></div>';
     }).join("");
+  }
+  // filter the full transaction list to a period, client-side
+  function txnsFor(period) {
+    var list = state.data.allTxns || [];
+    var now = new Date(), y = now.getFullYear(), m = now.getMonth();
+    return list.filter(function (t) {
+      var d = new Date(t.iso || t.date); if (isNaN(d.getTime())) return false;
+      if (period === "today") return d.toDateString() === now.toDateString();
+      if (period === "week") return (now - d) <= 7 * 864e5 && d <= now;
+      if (period === "month") return d.getFullYear() === y && d.getMonth() === m;
+      if (period === "year") return d.getFullYear() === y;
+      return true;
+    });
+  }
+  function txnList(items, limit) {
+    if (!items.length) return '<div class="psub" style="padding:14px 0">No transactions in this period.</div>';
+    return items.slice(0, limit || 60).map(function (t) {
+      return '<div class="li"><span class="dt num">' + esc(t.date) + '</span><span class="nm">' + esc(t.name) +
+        '<div class="ac">' + esc(t.cat || t.acct || "") + '</div></span><span class="amt num ' + (t.amt >= 0 ? "pos" : "neg") + '">' +
+        (t.amt >= 0 ? "+" : "−") + inr(Math.abs(t.amt)) + '</span></div>';
+    }).join("") + (items.length > (limit || 60) ? '<div class="psub" style="padding:10px 0">+ ' + (items.length - (limit || 60)) + ' more</div>' : "");
   }
 
   /* ---------- phone screens ---------- */
@@ -214,12 +241,11 @@
       /* today */
       '<div class="pv' + (state.period === "today" ? " on" : "") + '" data-p="today"><div class="big-stat serif num">' + inr(d.today.spent) + '</div>' +
       '<div class="psub">spent today · <span class="pos">' + inr(d.today.safe) + ' still safe to spend</span></div>' +
-      '<div class="sec"><span class="tab">Today\'s entries</span></div>' + moneyLines(d.today.entries) + '</div>' +
+      '<div class="sec"><span class="tab">Today\'s transactions</span></div>' + txnList(txnsFor("today")) + '</div>' +
       /* week */
       '<div class="pv' + (state.period === "week" ? " on" : "") + '" data-p="week"><div class="big-stat serif num">' + inr(d.week.total) + '</div>' +
       '<div class="psub">this week · <span class="neg">↑ ' + d.week.vs + '% vs your typical week</span></div>' +
-      '<div class="sec"><span class="tab">Mon → Sun</span></div><div class="ybars" style="height:80px">' + wb + '</div>' +
-      '<div class="psub" style="padding-top:10px">' + esc(d.week.note) + '</div></div>' +
+      '<div class="sec"><span class="tab">This week\'s transactions</span></div>' + txnList(txnsFor("week")) + '</div>' +
       /* month */
       '<div class="pv' + (state.period === "month" ? " on" : "") + '" data-p="month">' +
       '<div class="bsum"><div><span class="tab">Spent</span><div class="v serif num">' + inr(m.spent) + '</div></div>' +
@@ -228,12 +254,14 @@
       '<div class="projbar"><i style="width:' + Math.round(m.spent / m.budget * 100) + '%"></i><span class="mark" style="left:100%"></span></div>' +
       '<div class="psub" style="padding-top:10px">Projected month-end <b class="serif num" style="color:var(--ink)">' + inr(m.projected) + '</b> of ' + inr(m.budget) + ' budget · <span class="pos">on track</span> · avg ' + inr(m.avgDay) + '/day</div>' +
       '<div class="sec"><span class="tab">Category budgets</span><span class="more">Edit caps</span></div>' + catBars +
-      '<div class="callout" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="margin-top:8px;color:var(--ink)">' + esc(m.alert) + '</div></div></div>' +
+      (m.alert ? '<div class="callout" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="margin-top:8px;color:var(--ink)">' + esc(m.alert) + '</div></div>' : "") +
+      '<div class="sec"><span class="tab">This month\'s transactions</span></div>' + txnList(txnsFor("month")) + '</div>' +
       /* year */
       '<div class="pv' + (state.period === "year" ? " on" : "") + '" data-p="year"><div class="big-stat serif num">' + inr(d.year.total) + '</div>' +
       '<div class="psub">spent in 2026 so far · avg <b class="num">' + inr(d.year.avgMo) + '</b>/mo</div>' +
-      '<div class="ybars">' + yb + '</div><div class="sec"><span class="tab">Top categories · year</span></div>' +
-      d.year.top.map(function (t) { return ansLine(t.name, t.note || "", shortInr(t.amt)); }).join("") + '</div>' +
+      '<div class="ybars">' + yb + '</div>' +
+      (d.year.top.length ? '<div class="sec"><span class="tab">Top categories · year</span></div>' + d.year.top.map(function (t) { return ansLine(t.name, t.note || "", shortInr(t.amt)); }).join("") : "") +
+      '<div class="sec"><span class="tab">Transactions this year</span></div>' + txnList(txnsFor("year"), 80) + '</div>' +
       '</div>' +
       /* PLAN */
       '<div class="mv' + (state.spendMode === "plan" ? " on" : "") + '" data-m="plan">' + planHtml(d) + '</div>' +
@@ -343,13 +371,26 @@
       '</div></div>';
   }
   function wbSpend(d) {
-    var m = d.month;
+    var m = d.month, p = state.wperiod;
+    var list = txnsFor(p);
+    var periodSpent = list.reduce(function (s, t) { return s + Math.min(0, t.amt); }, 0);
+    var pill = ["today", "week", "month", "year"].map(function (x) {
+      return '<button data-wperiod="' + x + '" style="padding:6px 16px;font-size:12px;font-weight:600;border-radius:2px;' + (p === x ? "background:var(--ink);color:var(--paper)" : "color:var(--ink-soft)") + '">' + x.charAt(0).toUpperCase() + x.slice(1) + '</button>';
+    }).join("");
+    var strip = p === "month"
+      ? '<div><span class="tab">Spent</span><div class="v serif num">' + inr(m.spent) + '</div></div><div><span class="tab">Left</span><div class="v serif num pos">' + inr(m.left) + '</div></div><div><span class="tab">Projected</span><div class="v serif num">' + inr(m.projected) + '</div></div><div><span class="tab">Avg/day</span><div class="v serif num">' + inr(m.avgDay) + '</div></div>'
+      : '<div><span class="tab">Spent (' + p + ')</span><div class="v serif num">' + inr(Math.abs(periodSpent)) + '</div></div><div><span class="tab">Transactions</span><div class="v serif num">' + list.length + '</div></div>';
     var caps = m.cats.map(function (c) { var over = c.spent > c.cap, rem = c.cap - c.spent; return '<div class="ab"><span class="nm" style="width:150px">' + esc(c.name) + ' <span class="tab" style="letter-spacing:.04em">' + Math.round(c.spent / 1000) + 'k/' + Math.round(c.cap / 1000) + 'k</span></span><span class="track"><i style="width:' + Math.min(100, Math.round(c.spent / c.cap * 100)) + '%;background:' + (over ? "var(--neg)" : "var(--accent)") + '"></i></span><span class="pc num ' + (over ? "neg" : "pos") + '">' + (over ? "−" + inr(Math.abs(rem)) : inr(rem)) + '</span></div>'; }).join("");
-    return '<div class="wboard' + (state.wboard === "spend" ? " on" : "") + '" data-b="spend"><div class="lede-lbl" style="padding-top:18px">Spending & Budget · Month</div>' +
-      '<div class="w-trio" style="margin:14px 0"><div><span class="tab">Spent</span><div class="v serif num">' + inr(m.spent) + '</div></div><div><span class="tab">Left</span><div class="v serif num pos">' + inr(m.left) + '</div></div><div><span class="tab">Projected</span><div class="v serif num">' + inr(m.projected) + '</div></div><div><span class="tab">Avg/day</span><div class="v serif num">' + inr(m.avgDay) + '</div></div></div>' +
-      '<div class="w-grid" style="grid-template-columns:1.3fr 1fr"><div class="w-col lead"><div class="colhead">Category budgets <span class="more">Edit caps</span></div>' + caps + '</div>' +
-      '<div class="w-col"><div class="colhead">Recent</div><div class="w-tbl">' + d.recent.map(function (r) { return '<div class="tr"><span class="dt num">' + esc(r.date) + '</span><span class="nm">' + esc(r.name) + '</span><span class="amt num ' + (r.amt >= 0 ? "pos" : "neg") + '">' + (r.amt >= 0 ? "+" : "−") + inr(Math.abs(r.amt)) + '</span></div>'; }).join("") + '</div>' +
-      '<div class="w-call" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="font-size:12px;color:var(--ink);margin-top:6px">' + esc(m.alert) + '</div></div></div></div></div>';
+    var rows = list.slice(0, 100).map(function (t) { return '<div class="tr"><span class="dt num">' + esc(t.date) + '</span><span class="nm">' + esc(t.name) + '<div class="s" style="font-size:10px;color:var(--ink-faint)">' + esc(t.cat || t.acct || "") + '</div></span><span class="amt num ' + (t.amt >= 0 ? "pos" : "neg") + '">' + (t.amt >= 0 ? "+" : "−") + inr(Math.abs(t.amt)) + '</span></div>'; }).join("") || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No transactions in this period.</div>';
+    return '<div class="wboard' + (state.wboard === "spend" ? " on" : "") + '" data-b="spend">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 0 0"><div class="lede-lbl">Spending & Budget</div>' +
+      '<div style="display:flex;gap:6px;background:var(--paper-2);border:1px solid var(--rule);padding:4px;border-radius:3px">' + pill + '</div></div>' +
+      '<div class="w-trio" style="margin:14px 0">' + strip + '</div>' +
+      '<div class="w-grid" style="grid-template-columns:1fr 1.2fr">' +
+      '<div class="w-col lead"><div class="colhead">Category budgets <span class="more">' + (p === "month" ? "Edit caps" : "month") + '</span></div>' + (caps || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No caps set yet.</div>') +
+      (p === "month" && m.alert ? '<div class="w-call" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="font-size:12px;color:var(--ink);margin-top:6px">' + esc(m.alert) + '</div></div>' : "") + '</div>' +
+      '<div class="w-col"><div class="colhead">Transactions · ' + p + ' <span class="more">' + list.length + '</span></div><div class="w-tbl">' + rows + '</div></div>' +
+      '</div></div>';
   }
   function wbInvest(d) {
     var iv = d.invest;
@@ -453,6 +494,7 @@
     else if (t.dataset.wgo) { state.wboard = t.dataset.wgo; render(); }
     else if (t.dataset.mode) { state.spendMode = t.dataset.mode; render(); }
     else if (t.dataset.period) { state.period = t.dataset.period; render(); }
+    else if (t.dataset.wperiod) { state.wperiod = t.dataset.wperiod; render(); }
     else if (t.dataset.themeSet) { setTheme(t.dataset.themeSet); }
     else if (t.dataset.act === "theme") { setTheme(state.theme === "dark" ? "light" : "dark"); }
     else if (t.dataset.act === "blur") { state.blurred = !state.blurred; render(); }
