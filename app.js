@@ -132,7 +132,7 @@
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
     screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
-    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false,
+    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All",
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -207,32 +207,51 @@
   function medianJs(a) { if (!a.length) return 1; var s = a.slice().sort(function (x, y) { return x - y; }); return s[Math.floor(s.length / 2)]; }
   function ordinalJs(n) { n = Number(n) || 0; var s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
   var FIXED_CATS = { "Rent": 1, "EMI / Loan": 1, "Bills & utilities": 1, "Subscriptions": 1 };
-  // cluster uncategorised transactions by PAYEE (any amount / cadence). A payee
-  // seen 3+ times is a candidate — whether it's fixed (rent) or variable (a bar
-  // you visit irregularly). "fixed" = the amounts barely vary.
+  function makeGroup(items) {
+    var months = {}; items.forEach(function (t) { months[String(t.iso || "").slice(0, 7)] = true; });
+    var amts = items.map(function (t) { return Math.abs(t.amt); });
+    var minA = Math.min.apply(null, amts), maxA = Math.max.apply(null, amts);
+    var fixed = (maxA - minA) <= Math.max(50, minA * 0.05);
+    var days = items.map(function (t) { return new Date(t.iso).getDate(); });
+    return {
+      payee: titleCaseJs(keywordFrom(items[0].name) || "payment"), count: items.length, months: Object.keys(months).length,
+      fixed: fixed, amt: fixed ? medianJs(amts) : 0, minA: minA, maxA: maxA,
+      total: amts.reduce(function (s, x) { return s + x; }, 0), day: medianJs(days),
+      sample: items[0], ids: items.map(function (x) { return x.id; })
+    };
+  }
+  // Two grouping modes:
+  //  amount (default) — same amount (±₹10) + similar payee, 3+ months. Isolates
+  //    rent (₹17,910 to Shivam) from Shivam-groceries at other amounts.
+  //  payee — same payee, any amount, 3+ times, with a spread guard so a common
+  //    name across unrelated payments (your own name, an aggregator) is skipped.
   function recurringGroups() {
-    var list = uncatList(), byPayee = {};
-    list.forEach(function (t) {
-      var p = keywordFrom(t.name); if (!p || p.length < 4) return;
-      var key = null; for (var k in byPayee) { if (payeeSimilar(k, p)) { key = k; break; } }
-      (byPayee[key || p] = byPayee[key || p] || []).push(t);
-    });
-    var groups = [];
-    Object.keys(byPayee).forEach(function (p) {
-      var items = byPayee[p]; if (items.length < 3) return;
-      var months = {}; items.forEach(function (t) { months[String(t.iso || "").slice(0, 7)] = true; });
-      var amts = items.map(function (t) { return Math.abs(t.amt); });
-      var minA = Math.min.apply(null, amts), maxA = Math.max.apply(null, amts);
-      var fixed = (maxA - minA) <= Math.max(50, minA * 0.05);
-      var days = items.map(function (t) { return new Date(t.iso).getDate(); });
-      groups.push({
-        payee: titleCaseJs(p), count: items.length, months: Object.keys(months).length,
-        fixed: fixed, amt: fixed ? medianJs(amts) : 0, minA: minA, maxA: maxA,
-        total: amts.reduce(function (s, x) { return s + x; }, 0), day: medianJs(days),
-        sample: items[0], ids: items.map(function (x) { return x.id; })
+    var mode = state.groupBy || "amount";
+    var list = uncatList(), groups = [];
+    if (mode === "amount") {
+      var byAmt = {};
+      list.forEach(function (t) { var a = Math.round(Math.abs(t.amt) / 10) * 10; (byAmt[a] = byAmt[a] || []).push(t); });
+      Object.keys(byAmt).forEach(function (a) {
+        var items = byAmt[a], used = [];
+        for (var i = 0; i < items.length; i++) {
+          if (used[i]) continue;
+          var cl = [items[i]]; used[i] = true; var ki = keywordFrom(items[i].name);
+          for (var j = i + 1; j < items.length; j++) { if (used[j]) continue; if (payeeSimilar(ki, keywordFrom(items[j].name))) { cl.push(items[j]); used[j] = true; } }
+          var mo = {}; cl.forEach(function (t) { mo[String(t.iso || "").slice(0, 7)] = true; });
+          if (Object.keys(mo).length >= 3) groups.push(makeGroup(cl));
+        }
       });
-    });
-    groups.sort(function (x, y) { return y.total - x.total; });   // biggest spend first
+    } else {
+      var byP = {};
+      list.forEach(function (t) { var p = keywordFrom(t.name); if (!p || p.length < 5) return; var key = null; for (var k in byP) { if (payeeSimilar(k, p)) { key = k; break; } } (byP[key || p] = byP[key || p] || []).push(t); });
+      Object.keys(byP).forEach(function (p) {
+        var items = byP[p]; if (items.length < 3) return;
+        var amts = items.map(function (t) { return Math.abs(t.amt); });
+        if (Math.max.apply(null, amts) > Math.min.apply(null, amts) * 20) return;   // spread guard
+        groups.push(makeGroup(items));
+      });
+    }
+    groups.sort(function (x, y) { return y.total - x.total; });
     return groups;
   }
   function markDone(id, cat) {
@@ -381,7 +400,7 @@
       /* PLAN */
       '<div class="mv' + (state.spendMode === "plan" ? " on" : "") + '" data-m="plan">' + planHtml(d) + '</div>' +
       /* TRENDS */
-      trendView(d) +
+      '<div class="mv' + (state.spendMode === "trends" ? " on" : "") + '" data-m="trends">' + trendView(d) + '</div>' +
       '</section>';
   }
 
@@ -412,7 +431,7 @@
         '<div class="bsum" style="margin-top:16px"><div><span class="tab">Average / mo</span><div class="v serif num">' + inr(avg) + '</div></div><div><span class="tab">Months</span><div class="v serif num">' + keys.length + '</div></div></div>' +
         '<div class="sec"><span class="tab">Month by month</span></div>' + rows
       : '<div class="psub" style="padding:16px 0">Not enough history yet — trends build up as months pass.</div>';
-    return '<div class="mv' + (state.spendMode === "trends" ? " on" : "") + '" data-m="trends">' + body + '</div>';
+    return body;
   }
 
   function planHtml(d) {
@@ -521,7 +540,7 @@
     var m = d.month, p = state.wperiod;
     var list = txnsFor(p);
     var periodSpent = list.reduce(function (s, t) { return s + Math.min(0, t.amt); }, 0);
-    var pill = ["today", "week", "month", "year"].map(function (x) {
+    var pill = ["today", "week", "month", "year", "trends"].map(function (x) {
       return '<button data-wperiod="' + x + '" style="padding:6px 16px;font-size:12px;font-weight:600;border-radius:2px;' + (p === x ? "background:var(--ink);color:var(--paper)" : "color:var(--ink-soft)") + '">' + x.charAt(0).toUpperCase() + x.slice(1) + '</button>';
     }).join("");
     var strip = p === "month"
@@ -534,12 +553,15 @@
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 0 0"><div class="lede-lbl">Spending & Budget</div>' +
       '<div style="display:flex;gap:6px;background:var(--paper-2);border:1px solid var(--rule);padding:4px;border-radius:3px">' + pill + '</div></div>' +
       (uncatList().length ? '<div class="reviewbar"><div><div class="t">' + uncatList().length + ' uncategorised</div><div class="s">Assign them so budgets & patterns work</div></div><button data-act="review">Review</button></div>' : "") +
-      '<div class="w-trio" style="margin:14px 0">' + strip + '</div>' +
-      '<div class="w-grid" style="grid-template-columns:1fr 1.2fr">' +
-      '<div class="w-col lead"><div class="colhead">Category budgets <span class="more">' + (p === "month" ? "Edit caps" : "month") + '</span></div>' + (caps || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No caps set yet.</div>') +
-      (p === "month" && m.alert ? '<div class="w-call" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="font-size:12px;color:var(--ink);margin-top:6px">' + esc(m.alert) + '</div></div>' : "") + '</div>' +
-      '<div class="w-col"><div class="colhead">Transactions · ' + p + ' <span class="more">' + flist.length + '</span></div>' + searchBox() + '<div class="w-tbl">' + rows + '</div></div>' +
-      '</div></div>';
+      (p === "trends"
+        ? '<div style="padding-top:16px;max-width:760px">' + trendView(d) + '</div>'
+        : '<div class="w-trio" style="margin:14px 0">' + strip + '</div>' +
+          '<div class="w-grid" style="grid-template-columns:1fr 1.2fr">' +
+          '<div class="w-col lead"><div class="colhead">Category budgets <span class="more">' + (p === "month" ? "Edit caps" : "month") + '</span></div>' + (caps || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No caps set yet.</div>') +
+          (p === "month" && m.alert ? '<div class="w-call" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="font-size:12px;color:var(--ink);margin-top:6px">' + esc(m.alert) + '</div></div>' : "") + '</div>' +
+          '<div class="w-col"><div class="colhead">Transactions · ' + p + ' <span class="more">' + flist.length + '</span></div>' + searchBox() + '<div class="w-tbl">' + rows + '</div></div>' +
+          '</div>') +
+      '</div>';
   }
   function wbInvest(d) {
     var iv = d.invest;
@@ -688,7 +710,10 @@
     }).join("");
     return '<div class="modal"><button class="backdrop" data-act="closeReview" aria-label="Close"></button><div class="sheet">' +
       '<div class="mhead"><h2>Recurring <span class="tab" style="margin-left:6px">' + groups.length + ' found</span></h2><button class="x" data-act="closeReview" aria-label="Close">✕</button></div>' +
-      '<div class="psub" style="padding:2px 0 4px">Payments that repeat (same amount + payee, 3+ months). Tag one to tag them all — fixed ones (rent, EMI, bills, subscriptions) also get added to your obligations.</div>' +
+      '<div class="psub" style="padding:2px 0 8px">Payments that repeat. Tag one to tag them all — fixed ones (rent, EMI, bills, subscriptions) also become obligations.</div>' +
+      '<div class="tchips" style="margin-top:0"><span class="tab" style="align-self:center;margin-right:4px">Group by</span>' +
+      '<button class="' + ((state.groupBy || "amount") === "amount" ? "on" : "") + '" data-groupby="amount">Amount</button>' +
+      '<button class="' + (state.groupBy === "payee" ? "on" : "") + '" data-groupby="payee">Payee</button></div>' +
       searchBox() +
       (shown.length ? rows : '<div class="psub" style="padding:16px 0">' + (q ? "No matches." : "No recurring patterns found yet — need 3+ months of history.") + '</div>') +
       '<div class="flow" style="margin-top:14px">' + oneoffs + ' uncategorised in total. One-off payments aren\'t shown here — tag those from the transaction list (tap any row).</div>' +
@@ -706,7 +731,7 @@
   }
 
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend]");
+    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby]");
     if (!t) return;
     if (t.dataset.go) { state.screen = t.dataset.go; render(); }
     else if (t.dataset.wgo) { state.wboard = t.dataset.wgo; render(); }
@@ -714,6 +739,7 @@
     else if (t.dataset.period) { state.period = t.dataset.period; render(); }
     else if (t.dataset.wperiod) { state.wperiod = t.dataset.wperiod; render(); }
     else if (t.dataset.trend) { state.trendCat = t.dataset.trend; render(); }
+    else if (t.dataset.groupby) { state.groupBy = t.dataset.groupby; state._focusSearch = false; render(); }
     else if (t.dataset.themeSet) { setTheme(t.dataset.themeSet); }
     else if (t.dataset.act === "theme") { setTheme(state.theme === "dark" ? "light" : "dark"); }
     else if (t.dataset.act === "blur") { state.blurred = !state.blurred; render(); }
