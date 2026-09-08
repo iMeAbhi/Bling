@@ -135,6 +135,8 @@ function doPost(e) {
         case "upsert_liability": return json_({ ok: true, data: upsertLiability_(payload) });
         case "delete_liability": return json_({ ok: true, data: deleteLiability_(payload.id) });
         case "pay_emi": return json_({ ok: true, data: payEmi_(payload) });
+        case "install_gmail": return json_({ ok: true, data: installGmailSync_() });
+        case "set_gmail_query": setConfig_("gmail_query", clean_(payload.value, 200)); return json_({ ok: true, data: { gmailQuery: getConfig_("gmail_query") } });
         default: throw new Error("Unknown action: " + action);
       }
     } finally {
@@ -285,7 +287,12 @@ function buildSnapshot_() {
     monthly: monthly,
     accountsList: accounts.map(function (a) { return { id: String(a.id), name: String(a.name), type: String(a.type) }; }),
     predict: { brief: { head: "", body: "" }, nextMonth: fixedTotal + capsTotal, cardBill: cardBill_(accounts), cashflowBefore: fixedTotal, cashflowBuffer: buffer },
-    sync: syncHealth_()
+    sync: syncHealth_(),
+    config: {
+      smsToken: getConfig_("sms_webhook_token"),
+      gmailQuery: getConfig_("gmail_query"),
+      gmailInstalled: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === "syncGmailAlerts"; })
+    }
   };
 }
 
@@ -428,11 +435,11 @@ function suggestBudgets_(txns, budgets, tz) {
 /* =================================================================
    Gmail sync — parse bank/card alert emails into staged transactions
    ================================================================= */
-function installGmailSync() {
-  ensureInstalled_();
+function installGmailSync() { ensureInstalled_(); installGmailSync_(); SpreadsheetApp.getActiveSpreadsheet().toast("Gmail sync installed (every 15 min).", "Bling", 5); }
+function installGmailSync_() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === "syncGmailAlerts") ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger("syncGmailAlerts").timeBased().everyMinutes(15).create();
-  SpreadsheetApp.getActiveSpreadsheet().toast("Gmail sync installed (every 15 min).", "Bling", 5);
+  return { installed: true };
 }
 function syncGmailAlerts() { ensureInstalled_(); var lk = LockService.getScriptLock(); lk.waitLock(30000); try { return syncGmailAlerts_(); } finally { lk.releaseLock(); } }
 function syncGmailAlerts_() {

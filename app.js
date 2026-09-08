@@ -136,7 +136,7 @@
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
     screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
-    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All", addingLiab: false, editLiabId: null,
+    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All", addingLiab: false, editLiabId: null, wspendMode: "track", addingFixed: false,
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -467,7 +467,7 @@
       (liabs.length ? liabRows : '<div class="psub" style="padding:8px 0">No loans or EMIs yet. Add one — paying an EMI debits your account and reduces the balance in one go, and Bling works out your debt-free date.</div>');
     return loansSection +
       '<div class="sec"><span class="tab">Fixed this month</span><span class="more">' + inr(fixedTotal) + ' total</span></div>' + fx +
-      '<button class="addbtn" data-act="toast" data-msg="Add fixed expense (demo)">' + icon("plus") + 'Add a fixed expense</button>' +
+      '<button class="addbtn" data-act="addFixed">' + icon("plus") + 'Add a fixed expense</button>' +
       '<div class="flow" style="margin-top:4px">A match tags the expense and marks it settled. Tolerance is tunable, and you can re-tag any auto-match if Bling gets it wrong — needs ~3 months of history before it detects patterns on its own.</div>' +
       '<div class="sec"><span class="tab">Bling spotted a pattern</span></div>' + det +
       '<div class="sec"><span class="tab">Suggested budgets</span><span class="more">from last 3 months</span></div>' + sg +
@@ -502,6 +502,18 @@
       '<div class="sec"><span class="tab">Coming up · 14 days</span><span class="more">All</span></div>' + moneyLines(d.upcoming.slice(0, 4)) + '</section>';
   }
 
+  function syncSetup(d) {
+    if (!connected()) return "";
+    var c = d.config || {};
+    return '<div class="sec"><span class="tab">Automatic sync</span></div>' +
+      '<form data-form="gmailq"><label class="field"><span>Gmail label / search</span><input name="q" value="' + esc(c.gmailQuery || "") + '" placeholder="label:Bling newer_than:7d"></label></form>' +
+      '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn ghost" data-act="installGmail">' + (c.gmailInstalled ? "Reinstall" : "Install") + ' 15-min Gmail sync</button>' +
+      '<button class="btn ghost" data-act="scan">Scan now</button></div>' +
+      '<div class="flow">Label your bank/card alert emails <b>Bling</b> (a Gmail filter can auto-label), tune a rule in the ParserRules sheet, then install. Status: ' + (c.gmailInstalled ? "installed" : "not installed") + '.</div>' +
+      '<div class="sec"><span class="tab">SMS webhook (Android)</span></div>' +
+      '<label class="field"><span>Webhook token (tap to copy)</span><input class="txnsearch" readonly value="' + esc(c.smsToken || "") + '" onclick="this.select();document.execCommand&&document.execCommand(\'copy\')"></label>' +
+      '<div class="flow">In Tasker/MacroDroid, on a bank SMS, POST to your Apps Script URL: <code>{"action":"ingest_sms","token":"…","payload":{"text":"[sms]","sender":"[from]"}}</code></div>';
+  }
   function scYou(d) {
     var c = state.connection, connected = c.endpoint && c.token;
     var sync = d.sync.map(function (s) {
@@ -517,6 +529,7 @@
       (connected ? ' <button class="btn ghost" type="button" data-act="disconnect">Disconnect</button>' : "") +
       '</form>' +
       '<div class="sec"><span class="tab">Sync health</span></div>' + sync +
+      syncSetup(d) +
       '<div class="sec"><span class="tab">Subscriptions</span></div>' +
       '<div class="empty"><span class="tab">Nothing tracked yet</span><p>Let Bling scan Gmail for recurring charges you might have forgotten.</p><button data-act="scan">Scan Gmail for subscriptions</button></div>' +
       '<div class="sec"><span class="tab">Appearance</span></div>' +
@@ -556,7 +569,8 @@
     var m = d.month, p = state.wperiod;
     var list = txnsFor(p);
     var periodSpent = list.reduce(function (s, t) { return s + Math.min(0, t.amt); }, 0);
-    var pill = ["today", "week", "month", "year", "trends"].map(function (x) {
+    var wmode = state.wspendMode || "track";
+    var pill = ["today", "week", "month", "year"].map(function (x) {
       return '<button data-wperiod="' + x + '" style="padding:6px 16px;font-size:12px;font-weight:600;border-radius:2px;' + (p === x ? "background:var(--ink);color:var(--paper)" : "color:var(--ink-soft)") + '">' + x.charAt(0).toUpperCase() + x.slice(1) + '</button>';
     }).join("");
     var strip = p === "month"
@@ -565,19 +579,25 @@
     var caps = m.cats.map(function (c) { var over = c.spent > c.cap, rem = c.cap - c.spent; return '<div class="ab"><span class="nm" style="width:170px">' + esc(c.name) + ' <span class="tab" style="letter-spacing:.03em">' + shortInr(c.spent) + '/' + shortInr(c.cap) + '</span></span><span class="track"><i style="width:' + (c.cap ? Math.min(100, Math.round(c.spent / c.cap * 100)) : 0) + '%;background:' + (over ? "var(--neg)" : "var(--accent)") + '"></i></span><span class="pc num ' + (over ? "neg" : "pos") + '">' + (over ? "−" + inr(Math.abs(rem)) : inr(rem)) + '</span></div>'; }).join("");
     var flist = applyQuery(list);
     var rows = flist.slice(0, state.txnQuery ? 400 : 100).map(function (t) { return '<div class="tr" data-tedit="' + esc(t.id) + '" style="cursor:pointer"><span class="dt num">' + esc(t.date) + '</span><span class="nm">' + esc(t.name) + '<div class="s" style="font-size:10px;color:var(--ink-faint)">' + esc(t.cat || t.acct || "") + '</div></span><span class="amt num ' + (t.amt >= 0 ? "pos" : "neg") + '">' + (t.amt >= 0 ? "+" : "−") + inr(Math.abs(t.amt)) + '</span></div>'; }).join("") || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">' + (state.txnQuery ? "No matches." : "No transactions in this period.") + '</div>';
+    var modeToggle = '<div style="display:flex;gap:24px;margin:16px 0 4px;border-bottom:1px solid var(--rule)">' +
+      [["track", "Track"], ["plan", "Fixed & budgets"], ["trends", "Trends"]].map(function (mm) {
+        return '<button data-wsm="' + mm[0] + '" style="padding:8px 0;font-size:13px;font-weight:600;margin-bottom:-1px;' + (wmode === mm[0] ? "color:var(--ink);border-bottom:2px solid var(--accent)" : "color:var(--ink-faint);border-bottom:2px solid transparent") + '">' + mm[1] + '</button>';
+      }).join("") + '</div>';
+    var trackGrid = '<div class="w-trio" style="margin:14px 0">' + strip + '</div>' +
+      '<div class="w-grid" style="grid-template-columns:1fr 1.2fr">' +
+      '<div class="w-col lead"><div class="colhead">Category budgets <span class="more">' + (p === "month" ? "Edit caps" : "month") + '</span></div>' + (caps || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No caps set yet.</div>') +
+      (p === "month" && m.alert ? '<div class="w-call" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="font-size:12px;color:var(--ink);margin-top:6px">' + esc(m.alert) + '</div></div>' : "") + '</div>' +
+      '<div class="w-col"><div class="colhead">Transactions · ' + p + ' <span class="more">' + flist.length + '</span></div>' + searchBox() + '<div class="w-tbl">' + rows + '</div></div>' +
+      '</div>';
+    var body = wmode === "plan" ? '<div style="max-width:860px">' + planHtml(d) + '</div>'
+      : wmode === "trends" ? '<div style="max-width:860px">' + trendView(d) + '</div>'
+        : trackGrid;
     return '<div class="wboard' + (state.wboard === "spend" ? " on" : "") + '" data-b="spend">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 0 0"><div class="lede-lbl">Spending & Budget</div>' +
-      '<div style="display:flex;gap:6px;background:var(--paper-2);border:1px solid var(--rule);padding:4px;border-radius:3px">' + pill + '</div></div>' +
+      (wmode === "track" ? '<div style="display:flex;gap:6px;background:var(--paper-2);border:1px solid var(--rule);padding:4px;border-radius:3px">' + pill + '</div>' : "") + '</div>' +
+      modeToggle +
       (uncatList().length ? '<div class="reviewbar"><div><div class="t">' + uncatList().length + ' uncategorised</div><div class="s">Assign them so budgets & patterns work</div></div><button data-act="review">Review</button></div>' : "") +
-      (p === "trends"
-        ? '<div style="padding-top:16px;max-width:760px">' + trendView(d) + '</div>'
-        : '<div class="w-trio" style="margin:14px 0">' + strip + '</div>' +
-          '<div class="w-grid" style="grid-template-columns:1fr 1.2fr">' +
-          '<div class="w-col lead"><div class="colhead">Category budgets <span class="more">' + (p === "month" ? "Edit caps" : "month") + '</span></div>' + (caps || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No caps set yet.</div>') +
-          (p === "month" && m.alert ? '<div class="w-call" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="font-size:12px;color:var(--ink);margin-top:6px">' + esc(m.alert) + '</div></div>' : "") + '</div>' +
-          '<div class="w-col"><div class="colhead">Transactions · ' + p + ' <span class="more">' + flist.length + '</span></div>' + searchBox() + '<div class="w-tbl">' + rows + '</div></div>' +
-          '</div>') +
-      '</div>';
+      body + '</div>';
   }
   function wbInvest(d) {
     var iv = d.invest;
@@ -618,12 +638,29 @@
       (connected ? ' <button class="btn ghost" type="button" data-act="disconnect">Disconnect</button>' : "") +
       '</form></div>' +
       '<div class="w-col"><div class="colhead">Sync health</div>' + sync +
+      '<div style="margin-top:18px">' + syncSetup(d) + '</div>' +
       '<div class="colhead" style="margin-top:22px">Appearance</div>' +
       '<div style="display:flex;gap:22px"><button class="' + (state.theme === "light" ? "on" : "") + '" data-theme-set="light" style="padding:6px 0;font-size:13px;font-weight:600;' + (state.theme === "light" ? "border-bottom:2px solid var(--accent)" : "color:var(--ink-soft)") + '">Paper</button>' +
       '<button class="' + (state.theme === "dark" ? "on" : "") + '" data-theme-set="dark" style="padding:6px 0;font-size:13px;font-weight:600;' + (state.theme === "dark" ? "border-bottom:2px solid var(--accent)" : "color:var(--ink-soft)") + '">Charcoal</button></div>' +
       '</div></div></div>';
   }
 
+  function fixedModal() {
+    var accs = (state.data.accountsList || []).filter(function (a) { return a.type === "bank" || a.type === "cash"; });
+    if (!accs.length) accs = state.data.accountsList || [];
+    var fixedCats = ["Rent", "EMI / Loan", "Bills & utilities", "Subscriptions", "Other"];
+    return '<div class="modal"><button class="backdrop" data-act="closeFixed" aria-label="Close"></button><div class="sheet">' +
+      '<div class="mhead"><h2>Add a fixed expense</h2><button class="x" data-act="closeFixed" aria-label="Close">✕</button></div>' +
+      '<div class="psub" style="padding:2px 0 4px">A monthly obligation (rent, a bill, a subscription). Bling auto-matches it each month and reserves it before "safe to spend".</div>' +
+      '<form data-form="fixed">' +
+      '<label class="field"><span>Name</span><input name="name" required placeholder="e.g. Rent, Netflix, Electricity"></label>' +
+      '<label class="field"><span>Amount / month (₹)</span><input name="amount" type="number" min="0" required></label>' +
+      '<label class="field"><span>Category</span><select name="category">' + fixedCats.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join("") + '</select></label>' +
+      '<label class="field"><span>Paid from</span><select name="account">' + accs.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>'; }).join("") + '</select></label>' +
+      '<label class="field"><span>Due day</span><input name="dueDay" type="number" min="1" max="31" value="1"></label>' +
+      '<button class="btn" type="submit" style="margin-top:18px">Add</button>' +
+      '</form></div></div>';
+  }
   function liabModal() {
     var accs = state.data.accountsList || [];
     var L = state.editLiabId ? (state.data.liabilities || []).filter(function (x) { return String(x.id) === String(state.editLiabId); })[0] : null;
@@ -689,7 +726,7 @@
     var app = document.getElementById("app");
     app.innerHTML = phoneShell(state.data) + webShell(state.data) +
       '<button class="fab" data-act="add" aria-label="Add entry">+</button>' +
-      (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "") + (state.editId ? editModal() : "") + (state.addingLiab ? liabModal() : "");
+      (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "") + (state.editId ? editModal() : "") + (state.addingLiab ? liabModal() : "") + (state.addingFixed ? fixedModal() : "");
     if (state._focusSearch) {
       var pool = document.querySelector(".modal") ? document.querySelectorAll(".modal .txnsearch") : document.querySelectorAll(".txnsearch");
       var s = [].slice.call(pool).filter(function (i) { return i.offsetParent; })[0];
@@ -773,7 +810,7 @@
   }
 
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby],[data-editliab],[data-payemi]");
+    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby],[data-editliab],[data-payemi],[data-wsm]");
     if (!t) return;
     if (t.dataset.go) { state.screen = t.dataset.go; render(); }
     else if (t.dataset.wgo) { state.wboard = t.dataset.wgo; render(); }
@@ -790,6 +827,7 @@
     else if (t.dataset.act === "mark") { doMark(Number(t.dataset.idx)); }
     else if (t.dataset.act === "usecap") { doUseCap(Number(t.dataset.idx)); }
     else if (t.dataset.act === "scan") { doScan(); }
+    else if (t.dataset.act === "installGmail") { if (!connected()) return needSheet(); toast("Installing…"); api("install_gmail").then(function () { loadLive(true); toast("Gmail sync installed"); }).catch(function (e) { toast("Failed: " + e.message); }); }
     else if (t.dataset.act === "monthPrev") { state.monthOffset -= 1; render(); }
     else if (t.dataset.act === "monthNext") { if (state.monthOffset < 0) { state.monthOffset += 1; render(); } }
     else if (t.dataset.act === "review") { state.reviewing = true; state.txnQuery = ""; render(); }
@@ -807,6 +845,9 @@
     else if (t.dataset.act === "closeLiab") { state.addingLiab = false; state.editLiabId = null; render(); }
     else if (t.dataset.act === "deleteLiab") { deleteLiab(); }
     else if (t.dataset.payemi) { payEmi(t.dataset.payemi); }
+    else if (t.dataset.wsm) { state.wspendMode = t.dataset.wsm; render(); }
+    else if (t.dataset.act === "addFixed") { state.addingFixed = true; render(); }
+    else if (t.dataset.act === "closeFixed") { state.addingFixed = false; render(); }
   });
 
   function payEmi(id) {
@@ -832,6 +873,15 @@
     render();
   });
 
+  function saveFixed(f) {
+    var fd = new FormData(f);
+    if (!Number(fd.get("amount"))) { toast("Enter an amount"); return; }
+    var payload = { recurring: { name: fd.get("name"), amount: Number(fd.get("amount")), category: fd.get("category"), account_id: fd.get("account"), due_day: Number(fd.get("dueDay") || 1), tolerance_pct: 2 } };
+    state.addingFixed = false;
+    if (!connected()) { render(); toast("Added (demo — connect to save)"); return; }
+    render(); toast("Adding…");
+    api("confirm_recurring", payload).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
   function saveLiab(f) {
     var fd = new FormData(f);
     if (!Number(fd.get("total")) || !Number(fd.get("emi"))) { toast("Enter total and EMI"); return; }
@@ -956,6 +1006,10 @@
     if (edf) { e.preventDefault(); saveEdit(edf); return; }
     var lf = e.target.closest('form[data-form=liab]');
     if (lf) { e.preventDefault(); saveLiab(lf); return; }
+    var ff = e.target.closest('form[data-form=fixed]');
+    if (ff) { e.preventDefault(); saveFixed(ff); return; }
+    var gq = e.target.closest('form[data-form=gmailq]');
+    if (gq) { e.preventDefault(); if (!connected()) return needSheet(); var q = new FormData(gq).get("q"); api("set_gmail_query", { value: q }).then(function () { toast("Gmail label saved"); }).catch(function (e2) { toast("Failed: " + e2.message); }); return; }
     var f = e.target.closest('form[data-form=conn]');
     if (!f) return;
     e.preventDefault();
