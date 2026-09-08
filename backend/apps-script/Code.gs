@@ -26,7 +26,7 @@ var TABLES = {
   Liabilities: ["id", "name", "type", "lender", "account_id", "pay_from_id", "total", "outstanding", "emi_amount", "rate", "start_date", "end_date", "due_day", "note", "active", "updated_at"],
   Budgets: ["id", "name", "cap", "group", "created_at", "updated_at"],
   CategoryRules: ["id", "keywords", "category", "priority", "active", "updated_at"],
-  Recurring: ["id", "name", "category", "amount", "account_id", "due_day", "cadence", "status", "tolerance_pct", "settled_month", "active", "updated_at"],
+  Recurring: ["id", "name", "category", "amount", "account_id", "due_day", "cadence", "status", "tolerance_pct", "settled_month", "end_date", "active", "updated_at"],
   ParserRules: ["id", "bank", "source", "sender_pattern", "subject_pattern", "body_regex", "field_map_json", "direction", "enabled", "quarantined", "version", "updated_at"],
   IngestEvents: ["id", "source", "source_event_id", "received_at", "raw_hash", "parser_rule_id", "status", "transaction_id", "dedup_of", "error", "excerpt"],
   DeviceTokens: ["id", "name", "token_hash", "created_at", "last_used_at", "revoked_at"]
@@ -126,6 +126,14 @@ function doPost(e) {
         case "confirm_recurring": return json_({ ok: true, data: confirmRecurring_(payload) });
         case "set_budget_cap": return json_({ ok: true, data: setBudgetCap_(payload) });
         case "settle_recurring": return json_({ ok: true, data: settleRecurring_(payload.id) });
+        case "delete_recurring": return json_({ ok: true, data: deleteRecurring_(payload.id) });
+        case "gemini_briefing": return json_({ ok: true, data: geminiBriefing_() });
+        case "set_config": {
+          var allow = { gemini_key: 1, gemini_model: 1, gmail_query: 1, monthly_budget: 1, takehome: 1, safety_buffer: 1 };
+          if (!allow[payload.key]) throw new Error("config key not allowed");
+          setConfig_(String(payload.key), clean_(payload.value, 300));
+          return json_({ ok: true, data: { key: payload.key, saved: true } });
+        }
         case "confirm_transaction": return json_({ ok: true, data: confirmTransaction_(payload.id) });
         case "scan_gmail": return json_({ ok: true, data: syncGmailAlerts_() });
         case "auto_categorize": return json_({ ok: true, data: autoCategorize_() });
@@ -222,17 +230,19 @@ function buildSnapshot_() {
     .map(function (t) { return { time: Utilities.formatDate(new Date(t.date), tz, "h:mma").toLowerCase(), name: t.merchant || t.category, cat: t.category || t.source, amt: num_(t.amount) }; });
 
   /* recurring → fixed list + upcoming (settled = fingerprint matched this month) */
-  var fixed = recurring.map(function (r) {
+  var mmm = Utilities.formatDate(new Date(), tz, "MMM"), todayD = new Date();
+  function recEnded(r) { return r.end_date && new Date(r.end_date) < todayD; }
+  var recActive = recurring.filter(function (r) { return !recEnded(r); });
+  var fixed = recActive.map(function (r) {
     var settled = String(r.settled_month) === monthKey;
     return {
-      name: r.name, amt: num_(r.amount),
-      acct: (acctName_(accounts, r.account_id) || "") + " · due " + ordinal_(r.due_day) + (settled ? " · matched" : " · ±" + (num_(r.tolerance_pct) || 2) + "%"),
-      status: settled ? "ok" : "up", day: Number(r.due_day) || ""
+      id: String(r.id), name: r.name, amt: num_(r.amount), category: String(r.category || ""),
+      acct: (acctName_(accounts, r.account_id) || "no account") + " · due " + ordinal_(r.due_day) + (settled ? " · matched" : " · ±" + (num_(r.tolerance_pct) || 2) + "%") + (r.end_date ? " · till " + String(r.end_date).slice(0, 7) : ""),
+      status: settled ? "ok" : "up", day: Number(r.due_day) || "", endDate: String(r.end_date || "")
     };
   });
   var fixedTotal = fixed.reduce(function (s, f) { return s + f.amt; }, 0);
-  var mmm = Utilities.formatDate(new Date(), tz, "MMM"), todayD = new Date();
-  var upcoming = recurring.filter(function (r) { return String(r.settled_month) !== monthKey; })
+  var upcoming = recActive.filter(function (r) { return String(r.settled_month) !== monthKey; })
     .map(function (r) { return { date: ordinal_(r.due_day) + " " + mmm, day: Number(r.due_day), name: r.name, acct: acctName_(accounts, r.account_id) || "", amt: -Math.abs(num_(r.amount)) }; });
 
   /* Loans & EMIs — only active, not past end date, still owing */
@@ -291,7 +301,8 @@ function buildSnapshot_() {
     config: {
       smsToken: getConfig_("sms_webhook_token"),
       gmailQuery: getConfig_("gmail_query"),
-      gmailInstalled: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === "syncGmailAlerts"; })
+      gmailInstalled: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === "syncGmailAlerts"; }),
+      geminiSet: !!getConfig_("gemini_key")
     }
   };
 }
@@ -570,7 +581,7 @@ function confirmRecurring_(p) {
   return upsertObject_("Recurring", "id", {
     id: id_("rec"), name: clean_(r.name || "Recurring", 120), category: clean_(r.category || "Fixed", 60),
     amount: Math.abs(num_(r.amount)), account_id: String(r.account_id || r.accountId || ""),
-    due_day: Number(r.due_day || r.dueDay || 1), cadence: "monthly", status: "upcoming", tolerance_pct: num_(r.tolerance_pct) || 3, settled_month: "", active: true, updated_at: nowIso_()
+    due_day: Number(r.due_day || r.dueDay || 1), cadence: "monthly", status: "upcoming", tolerance_pct: num_(r.tolerance_pct) || 3, settled_month: "", end_date: String(r.end_date || r.endDate || ""), active: true, updated_at: nowIso_()
   });
 }
 function setBudgetCap_(p) {
@@ -580,6 +591,27 @@ function setBudgetCap_(p) {
   return upsertObject_("Budgets", "id", row);
 }
 function settleRecurring_(id) { var f = requireObject_("Recurring", "id", id); writeObjectAt_("Recurring", f.rowIndex, Object.assign({}, f.object, { settled_month: dateKey_(nowIso_(), Session.getScriptTimeZone(), "yyyy-MM"), updated_at: nowIso_() })); return { id: id, settled: true }; }
+function deleteRecurring_(id) { var f = requireObject_("Recurring", "id", id); writeObjectAt_("Recurring", f.rowIndex, Object.assign({}, f.object, { active: false, updated_at: nowIso_() })); return { id: id, deleted: true }; }
+/* Gemini on-demand briefing from the live snapshot (needs the user's own key) */
+function geminiBriefing_() {
+  var key = getConfig_("gemini_key");
+  if (!key) return { text: "Add your Gemini API key in Account → AI to enable briefings.", needKey: true };
+  var s = buildSnapshot_();
+  var L = [];
+  L.push("Net worth ₹" + Math.round(s.netWorth) + " (liquid ₹" + Math.round(s.liquid) + ", invested ₹" + Math.round(s.invested) + ", owed ₹" + Math.round(s.owed) + ").");
+  L.push("This month: spent ₹" + Math.round(s.month.spent) + " of ₹" + s.month.budget + " budget; projected ₹" + Math.round(s.month.projected) + "; safe to spend today ₹" + s.answers.safeToday + ".");
+  if (s.month.alert) L.push("Over cap: " + s.month.alert);
+  L.push("Upcoming: " + (s.upcoming || []).slice(0, 8).map(function (u) { return u.name + " ₹" + Math.abs(u.amt) + " on " + u.date; }).join("; "));
+  if (s.answers.debtFree && s.answers.debtFree !== "Debt-free") L.push("Debt-free by " + s.answers.debtFree + ".");
+  var prompt = "You are a concise Indian personal-finance assistant. From this snapshot, write a 3-4 sentence briefing: the single most urgent thing this week, one risk, and one concrete action. Use ₹ and Indian numbering. Direct, specific, no fluff, no preamble.\n\n" + L.join("\n");
+  var model = getConfig_("gemini_model") || "gemini-2.0-flash";
+  var url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + encodeURIComponent(key);
+  var resp = UrlFetchApp.fetch(url, { method: "post", contentType: "application/json", payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }), muteHttpExceptions: true });
+  var j; try { j = JSON.parse(resp.getContentText()); } catch (e) { return { text: "Gemini returned an unreadable response." }; }
+  if (j.error) return { text: "Gemini error: " + (j.error.message || "check your key/model") };
+  var parts = (((j.candidates || [])[0] || {}).content || {}).parts || [];
+  return { text: parts[0] && parts[0].text ? parts[0].text.trim() : "No briefing produced." };
+}
 function confirmTransaction_(id) { var f = requireObject_("Transactions", "id", id); writeObjectAt_("Transactions", f.rowIndex, Object.assign({}, f.object, { status: "confirmed", updated_at: nowIso_() })); return f.object; }
 
 /* =================================================================

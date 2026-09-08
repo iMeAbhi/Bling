@@ -136,7 +136,7 @@
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
     screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
-    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All", addingLiab: false, editLiabId: null, wspendMode: "track", addingFixed: false,
+    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All", addingLiab: false, editLiabId: null, wspendMode: "track", addingFixed: false, editFixedId: null, briefing: "", briefingLoading: false,
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -443,7 +443,7 @@
     var fx = d.fixed.map(function (f) {
       var mk = f.status === "ok" ? '<span class="mk ok">' + icon("check") + '</span>' : '<span class="mk up">' + f.day + '</span>';
       var st = f.status === "ok" ? '<span class="st ok">Settled</span>' : '<span class="st up">Upcoming</span>';
-      return '<div class="fx">' + mk + '<div class="bd"><div class="t">' + esc(f.name) + '</div><div class="s">' + esc(f.acct) + '</div></div><div class="amt num">' + inr(f.amt) + st + '</div></div>';
+      return '<div class="fx"' + (f.id ? ' data-editfixed="' + esc(f.id) + '" style="cursor:pointer"' : "") + '>' + mk + '<div class="bd"><div class="t">' + esc(f.name) + '</div><div class="s">' + esc(f.acct) + '</div></div><div class="amt num">' + inr(f.amt) + st + '</div></div>';
     }).join("");
     var det = d.detects.map(function (x, i) {
       return '<div class="detect"><div class="kick">✦ Recurring detected</div><p>' + x.text + '</p><div class="actions">' +
@@ -494,8 +494,9 @@
   function scPredict(d) {
     var p = d.predict;
     return '<section class="screen" data-s="predict"><div class="h1">Predict</div><div class="psub">Forecasts from your live numbers</div>' +
-      '<div class="brief"><div class="kick">Intelligence Briefing</div><h3>' + esc(p.brief.head) + '</h3><p>' + p.brief.body + '</p>' +
-      '<button class="go" data-act="toast" data-msg="Briefing needs your Gemini key (Settings)">✦ Generate full briefing</button></div>' +
+      '<div class="brief"><div class="kick">Intelligence Briefing</div>' +
+      (state.briefing ? '<p style="font-size:14px;line-height:1.55;color:var(--ink)">' + esc(state.briefing) + '</p>' : '<h3>' + esc(p.brief.head) + '</h3><p>' + p.brief.body + '</p>') +
+      '<button class="go" data-act="briefing">' + (state.briefingLoading ? "Thinking…" : "✦ Generate briefing") + '</button></div>' +
       '<div class="sec"><span class="tab">Forecast</span></div>' +
       ansLine("Next month's spend", "from commitments · ±8%", shortInr(p.nextMonth)) +
       '<div class="ans"><div class="l"><div class="t">This cycle\'s card bill</div><div class="s">spend + EMIs to hit</div></div><div class="dotlead"></div><div class="k serif num neg">' + inr(p.cardBill) + '</div></div>' +
@@ -512,7 +513,10 @@
       '<div class="flow">Label your bank/card alert emails <b>Bling</b> (a Gmail filter can auto-label), tune a rule in the ParserRules sheet, then install. Status: ' + (c.gmailInstalled ? "installed" : "not installed") + '.</div>' +
       '<div class="sec"><span class="tab">SMS webhook (Android)</span></div>' +
       '<label class="field"><span>Webhook token (tap to copy)</span><input class="txnsearch" readonly value="' + esc(c.smsToken || "") + '" onclick="this.select();document.execCommand&&document.execCommand(\'copy\')"></label>' +
-      '<div class="flow">In Tasker/MacroDroid, on a bank SMS, POST to your Apps Script URL: <code>{"action":"ingest_sms","token":"…","payload":{"text":"[sms]","sender":"[from]"}}</code></div>';
+      '<div class="flow">In Tasker/MacroDroid, on a bank SMS, POST to your Apps Script URL: <code>{"action":"ingest_sms","token":"…","payload":{"text":"[sms]","sender":"[from]"}}</code></div>' +
+      '<div class="sec"><span class="tab">AI briefing (Gemini)</span><span class="more">' + (c.geminiSet ? "key set" : "not set") + '</span></div>' +
+      '<form data-form="gemkey"><label class="field"><span>Gemini API key</span><input name="key" type="password" placeholder="' + (c.geminiSet ? "•••••••• (saved)" : "AIza…") + '"></label><button class="btn" type="submit" style="margin-top:10px">Save key</button></form>' +
+      '<div class="flow">Get a free key at aistudio.google.com/apikey. Stored in your Sheet only; powers the Predict → Generate briefing button.</div>';
   }
   function scYou(d) {
     var c = state.connection, connected = c.endpoint && c.token;
@@ -611,9 +615,11 @@
   function wbPredict(d) {
     var p = d.predict;
     return '<div class="wboard' + (state.wboard === "predict" ? " on" : "") + '" data-b="predict"><div class="w-grid">' +
-      '<div class="w-col lead"><div class="lede-lbl">Intelligence Briefing</div><div style="font-family:\'Fraunces\',serif;font-size:38px;font-weight:600;line-height:1.05;margin:14px 0 14px;letter-spacing:-.02em">' + esc(p.brief.head) + '</div>' +
-      '<p style="font-size:14px;color:var(--ink-soft);line-height:1.6;max-width:46ch">' + p.brief.body + '</p>' +
-      '<button class="go" style="margin-top:16px;width:auto;padding:10px 18px" data-act="toast" data-msg="Needs your Gemini key">✦ Generate full briefing</button>' +
+      '<div class="w-col lead"><div class="lede-lbl">Intelligence Briefing</div>' +
+      (state.briefing
+        ? '<p style="font-size:17px;color:var(--ink);line-height:1.5;max-width:52ch;margin:14px 0">' + esc(state.briefing) + '</p>'
+        : '<div style="font-family:\'Fraunces\',serif;font-size:38px;font-weight:600;line-height:1.05;margin:14px 0 14px;letter-spacing:-.02em">' + esc(p.brief.head) + '</div><p style="font-size:14px;color:var(--ink-soft);line-height:1.6;max-width:46ch">' + p.brief.body + '</p>') +
+      '<button class="go" style="margin-top:16px;width:auto;padding:10px 18px" data-act="briefing">' + (state.briefingLoading ? "Thinking…" : "✦ Generate briefing") + '</button>' +
       '<div class="colhead" style="margin-top:26px">Forecast</div>' + ansWeb("Next month's spend", "±8%", shortInr(p.nextMonth)) + ansWeb("This cycle's card bill", "spend + EMIs", inr(p.cardBill), "neg") + ansWeb("Debt-free by", "avalanche", d.answers.debtFree) + '</div>' +
       '<div class="w-col"><div class="colhead">Cash-flow radar</div><p style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin-bottom:12px">Dues vs your next salary (1 Oct).</p>' +
       '<div class="ab"><span class="nm">Before salary</span><span class="track"><i style="width:88%;background:var(--neg)"></i></span><span class="pc num neg">' + shortInr(p.cashflowBefore) + '</span></div>' +
@@ -646,19 +652,22 @@
   }
 
   function fixedModal() {
-    var accs = (state.data.accountsList || []).filter(function (a) { return a.type === "bank" || a.type === "cash"; });
-    if (!accs.length) accs = state.data.accountsList || [];
+    var accs = state.data.accountsList || [];
+    var F = state.editFixedId ? (state.data.fixed || []).filter(function (x) { return String(x.id) === String(state.editFixedId); })[0] : null;
     var fixedCats = ["Rent", "EMI / Loan", "Bills & utilities", "Subscriptions", "Other"];
+    if (F && F.category && fixedCats.indexOf(F.category) === -1) fixedCats.unshift(F.category);
     return '<div class="modal"><button class="backdrop" data-act="closeFixed" aria-label="Close"></button><div class="sheet">' +
-      '<div class="mhead"><h2>Add a fixed expense</h2><button class="x" data-act="closeFixed" aria-label="Close">✕</button></div>' +
-      '<div class="psub" style="padding:2px 0 4px">A monthly obligation (rent, a bill, a subscription). Bling auto-matches it each month and reserves it before "safe to spend".</div>' +
-      '<form data-form="fixed">' +
-      '<label class="field"><span>Name</span><input name="name" required placeholder="e.g. Rent, Netflix, Electricity"></label>' +
-      '<label class="field"><span>Amount / month (₹)</span><input name="amount" type="number" min="0" required></label>' +
-      '<label class="field"><span>Category</span><select name="category">' + fixedCats.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join("") + '</select></label>' +
+      '<div class="mhead"><h2>' + (F ? "Edit" : "Add") + ' fixed expense</h2><button class="x" data-act="closeFixed" aria-label="Close">✕</button></div>' +
+      '<div class="psub" style="padding:2px 0 4px">A monthly obligation (rent, a bill, a subscription). Bling auto-matches it each month and reserves it before "safe to spend". Set an end date to stop it.</div>' +
+      '<form data-form="fixed">' + (F ? '<input type="hidden" name="id" value="' + esc(F.id) + '">' : "") +
+      '<label class="field"><span>Name</span><input name="name" required value="' + esc(F ? F.name : "") + '" placeholder="e.g. Rent, Netflix, Electricity"></label>' +
+      '<label class="field"><span>Amount / month (₹)</span><input name="amount" type="number" min="0" required value="' + (F ? F.amt : "") + '"></label>' +
+      '<label class="field"><span>Category</span><select name="category">' + fixedCats.map(function (c) { return '<option' + (F && c === F.category ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select></label>' +
       '<label class="field"><span>Paid from</span><select name="account">' + accs.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>'; }).join("") + '</select></label>' +
-      '<label class="field"><span>Due day</span><input name="dueDay" type="number" min="1" max="31" value="1"></label>' +
-      '<button class="btn" type="submit" style="margin-top:18px">Add</button>' +
+      '<label class="field"><span>Due day</span><input name="dueDay" type="number" min="1" max="31" value="' + (F ? F.day : 1) + '"></label>' +
+      '<label class="field"><span>End date (optional — stops it)</span><input name="endDate" type="date" value="' + (F ? esc(F.endDate || "") : "") + '"></label>' +
+      '<div style="display:flex;gap:10px;margin-top:18px"><button class="btn" type="submit">' + (F ? "Save" : "Add") + '</button>' +
+      (F ? '<button class="btn ghost" type="button" data-act="deleteFixed" style="border-color:var(--neg);color:var(--neg)">Delete</button>' : "") + '</div>' +
       '</form></div></div>';
   }
   function liabModal() {
@@ -810,7 +819,7 @@
   }
 
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby],[data-editliab],[data-payemi],[data-wsm]");
+    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby],[data-editliab],[data-payemi],[data-wsm],[data-editfixed]");
     if (!t) return;
     if (t.dataset.go) { state.screen = t.dataset.go; render(); }
     else if (t.dataset.wgo) { state.wboard = t.dataset.wgo; render(); }
@@ -846,8 +855,11 @@
     else if (t.dataset.act === "deleteLiab") { deleteLiab(); }
     else if (t.dataset.payemi) { payEmi(t.dataset.payemi); }
     else if (t.dataset.wsm) { state.wspendMode = t.dataset.wsm; render(); }
-    else if (t.dataset.act === "addFixed") { state.addingFixed = true; render(); }
-    else if (t.dataset.act === "closeFixed") { state.addingFixed = false; render(); }
+    else if (t.dataset.act === "addFixed") { state.addingFixed = true; state.editFixedId = null; render(); }
+    else if (t.dataset.act === "closeFixed") { state.addingFixed = false; state.editFixedId = null; render(); }
+    else if (t.dataset.editfixed) { state.editFixedId = t.dataset.editfixed; state.addingFixed = true; render(); }
+    else if (t.dataset.act === "deleteFixed") { deleteFixed(); }
+    else if (t.dataset.act === "briefing") { doBriefing(); }
   });
 
   function payEmi(id) {
@@ -876,11 +888,27 @@
   function saveFixed(f) {
     var fd = new FormData(f);
     if (!Number(fd.get("amount"))) { toast("Enter an amount"); return; }
-    var payload = { recurring: { name: fd.get("name"), amount: Number(fd.get("amount")), category: fd.get("category"), account_id: fd.get("account"), due_day: Number(fd.get("dueDay") || 1), tolerance_pct: 2 } };
-    state.addingFixed = false;
-    if (!connected()) { render(); toast("Added (demo — connect to save)"); return; }
-    render(); toast("Adding…");
-    api("confirm_recurring", payload).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+    var id = fd.get("id");
+    var rec = { name: fd.get("name"), amount: Number(fd.get("amount")), category: fd.get("category"), account_id: fd.get("account"), due_day: Number(fd.get("dueDay") || 1), end_date: fd.get("endDate") || "", tolerance_pct: 2 };
+    state.addingFixed = false; state.editFixedId = null;
+    if (!connected()) { render(); toast("Saved (demo — connect to save)"); return; }
+    render(); toast("Saving…");
+    // editing an existing recurring uses upsert_recurring (needs its id); new uses confirm_recurring
+    var call = id ? api("upsert_recurring", Object.assign({ id: id }, rec)) : api("confirm_recurring", { recurring: rec });
+    call.then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
+  function deleteFixed() {
+    var id = state.editFixedId; if (!id) return;
+    state.addingFixed = false; state.editFixedId = null;
+    if (!connected()) { render(); toast("Removed (demo)"); return; }
+    render(); toast("Removing…");
+    api("delete_recurring", { id: id }).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
+  function doBriefing() {
+    if (!connected()) { needSheet(); return; }
+    state.briefingLoading = true; render();
+    api("gemini_briefing").then(function (r) { state.briefingLoading = false; state.briefing = r.text || "No briefing."; render(); if (r.needKey) toast("Add your Gemini key in Account → AI"); })
+      .catch(function (e) { state.briefingLoading = false; render(); toast("Failed: " + e.message); });
   }
   function saveLiab(f) {
     var fd = new FormData(f);
@@ -1010,6 +1038,8 @@
     if (ff) { e.preventDefault(); saveFixed(ff); return; }
     var gq = e.target.closest('form[data-form=gmailq]');
     if (gq) { e.preventDefault(); if (!connected()) return needSheet(); var q = new FormData(gq).get("q"); api("set_gmail_query", { value: q }).then(function () { toast("Gmail label saved"); }).catch(function (e2) { toast("Failed: " + e2.message); }); return; }
+    var gk = e.target.closest('form[data-form=gemkey]');
+    if (gk) { e.preventDefault(); if (!connected()) return needSheet(); var k = new FormData(gk).get("key"); if (!k) { toast("Paste a key"); return; } api("set_config", { key: "gemini_key", value: k }).then(function () { loadLive(true); toast("Gemini key saved"); }).catch(function (e2) { toast("Failed: " + e2.message); }); return; }
     var f = e.target.closest('form[data-form=conn]');
     if (!f) return;
     e.preventDefault();
