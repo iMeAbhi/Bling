@@ -28,6 +28,15 @@ Both flows stage transactions the app shows for review; nothing silently corrupt
 
 **Never** paste a token into a URL, screenshot, or commit. Rotate by creating a new token and revoking the old.
 
+## Updating the backend (after any Code.gs change)
+
+The frontend auto-updates from GitHub Pages, but Apps Script does **not** — it runs whatever you last pasted. After a backend change:
+
+1. Extensions → Apps Script → select all → paste the latest `apps-script/Code.gs` → **Ctrl/Cmd+S**.
+2. Run **`setupBling`** once (adds any new tabs/columns — additive, never deletes data).
+3. **Deploy → Manage deployments → ✏️ edit → Version: New version → Deploy.** (Keeps the same `/exec` URL + token.)
+4. Reload the app.
+
 ## Categorising imported transactions
 
 Bank imports have raw UPI narration, not clean categories — so budgets read ₹0 until transactions are categorised. The `CategoryRules` tab maps keywords → a category (e.g. `zomato,swiggy → Eating out`), seeded with sensible India defaults. Edit it to fit your merchants. Rules apply automatically when the app reads your data (so budgets/patterns light up), and **Bling → Auto-categorise transactions** writes the categories permanently onto any still-uncategorised rows.
