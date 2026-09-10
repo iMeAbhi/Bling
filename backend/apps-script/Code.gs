@@ -233,6 +233,12 @@ function buildSnapshot_() {
     m.count += 1;
     if (neg < 0) { m.spent += -neg; var c = String(t.category || "Uncategorized"); m.cats[c] = (m.cats[c] || 0) + (-neg); }
   });
+  // average monthly spend over COMPLETE months (exclude the current partial one),
+  // last 6 — used for emergency buffer and jobless runway, not the partial month
+  var completeMonths = Object.keys(monthly).filter(function (k) { return k !== monthKey; }).sort();
+  var avgMonthly = completeMonths.length
+    ? Math.round(completeMonths.slice(-6).reduce(function (s, k) { return s + monthly[k].spent; }, 0) / Math.min(6, completeMonths.length))
+    : monthSpent;
   var todayEntries = txns.filter(function (t) { return dateKey_(t.date, tz, "yyyy-MM-dd") === todayKey; })
     .map(function (t) { return { time: Utilities.formatDate(new Date(t.date), tz, "h:mma").toLowerCase(), name: t.merchant || t.category, cat: t.category || t.source, amt: num_(t.amount) }; });
 
@@ -295,9 +301,9 @@ function buildSnapshot_() {
     stale: "",
     netWorth: netWorth, deltaMonth: monthDelta, deltaPct: netWorth ? Math.round(monthDelta / Math.abs(netWorth) * 1000) / 10 : 0,
     liquid: liquid, invested: invested, owed: owed, cards: cardsSummary_(accounts),
-    answers: { safeToday: Math.max(0, safeToday), debtFree: debtFree, debtFreeNote: activeEmis.length ? activeEmis.length + " active loans/EMIs" : "", runway: runway_(liquid, monthSpent), runwayNote: "liquid ÷ monthly spend", cardBill: cardBill_(accounts) },
+    answers: { safeToday: Math.max(0, safeToday), debtFree: debtFree, debtFreeNote: activeEmis.length ? activeEmis.length + " active loans/EMIs" : "", runway: runway_(liquid, avgMonthly), runwayNote: "liquid ÷ avg monthly spend", cardBill: cardBill_(accounts) },
     allocation: allocation,
-    emergency: emergency_(liquid, monthSpent, getConfig_),
+    emergency: emergency_(liquid, avgMonthly),
     upcoming: upcoming,
     today: { spent: todaySpent, safe: Math.max(0, safeToday), entries: todayEntries },
     week: { total: 0, vs: 0, days: [0, 0, 0, 0, 0, 0, 0], labels: ["M", "T", "W", "T", "F", "S", "S"], note: "" },
@@ -342,11 +348,11 @@ function cardsSummary_(accounts) {
   var totUsed = cards.reduce(function (s, c) { return s + c.used; }, 0), totLimit = cards.reduce(function (s, c) { return s + c.limit; }, 0);
   return { list: cards.sort(function (x, y) { return y.pct - x.pct; }), totalUsed: totUsed, totalLimit: totLimit, blended: totLimit ? Math.round(totUsed / totLimit * 100) : 0 };
 }
-function runway_(liquid, monthSpend) { if (!monthSpend) return "—"; return (liquid / monthSpend).toFixed(1) + " mo"; }
-function emergency_(liquid, monthSpend, cfg) {
-  var target = monthSpend * 6 || 1;
+function runway_(liquid, avgSpend) { if (!avgSpend) return "—"; return (liquid / avgSpend).toFixed(1) + " mo"; }
+function emergency_(liquid, avgSpend) {
+  var target = (avgSpend * 6) || 1;
   var pct = Math.min(100, Math.round(liquid / target * 100));
-  return { have: liquid, pct: pct, short: Math.max(0, Math.round(target - liquid)) };
+  return { have: liquid, pct: pct, short: Math.max(0, Math.round(target - liquid)), target: Math.round(target) };
 }
 function overCapAlert_(cats) {
   var over = cats.filter(function (c) { return c.spent > c.cap; });
