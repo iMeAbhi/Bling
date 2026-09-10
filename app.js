@@ -102,6 +102,10 @@
       { id: "l1", name: "iPhone 15 EMI", type: "emi", lender: "Bajaj Finserv", onAccount: "Atlas card", payFrom: "Salary account", total: 96000, outstanding: 32000, emi: 8000, rate: 0, endDate: "2027-01-05", dueDay: 5, note: "", pct: 67, ended: false },
       { id: "l2", name: "Home loan", type: "loan", lender: "SBI", onAccount: "SBI Home Loan", payFrom: "Salary account", total: 4500000, outstanding: 3800000, emi: 42300, rate: 8.4, endDate: "2038-06-15", dueDay: 15, note: "", pct: 16, ended: false }
     ],
+    simpleEmis: [
+      { id: "re1", name: "Creditsaison", emi: 7304, payFrom: "SBI Savings", account_id: "acc_hdfc", dueDay: 2, endDate: "" },
+      { id: "re2", name: "Ndx", emi: 8797, payFrom: "SBI Savings", account_id: "acc_hdfc", dueDay: 5, endDate: "" }
+    ],
     monthly: {
       "2026-04": { spent: 61200, count: 210, cats: { "Eating out": 8200, "Groceries": 9100, "Transport": 4200, "Rent": 17910 } },
       "2026-05": { spent: 58400, count: 198, cats: { "Eating out": 6400, "Groceries": 9800, "Transport": 3800, "Rent": 17910 } },
@@ -137,7 +141,7 @@
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
     screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
-    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All", addingLiab: false, editLiabId: null, wspendMode: "track", addingFixed: false, editFixedId: null, briefing: "", briefingLoading: false, editingCaps: false,
+    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All", addingLiab: false, editLiabId: null, wspendMode: "track", addingFixed: false, editFixedId: null, briefing: "", briefingLoading: false, editingCaps: false, convertFrom: null,
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -476,9 +480,17 @@
         '<div class="meter" style="margin-top:9px"><i style="width:' + l.pct + '%;background:var(--accent)"></i></div>' +
         '<div class="s" style="margin-top:6px">Outstanding <b style="color:var(--ink)">' + inr(l.outstanding) + '</b> of ' + inr(l.total) + ' · EMI ' + inr(l.emi) + '/mo</div></div>';
     }).join("");
+    var emis = d.simpleEmis || [];
+    var emiRows = emis.map(function (e) {
+      return '<div class="liab"><div class="lh"><div><div class="t">' + esc(e.name) + ' <span class="tab">tagged EMI</span></div>' +
+        '<div class="s">' + inr(e.emi) + '/mo · from ' + esc(e.payFrom || "—") + ' · due ' + ordinalJs(e.dueDay) + (e.endDate ? ' · till ' + esc(e.endDate.slice(0, 7)) : ' · no end date') + '</div></div>' +
+        '<div class="la"><button class="use" data-convertloan="' + esc(e.id) + '">Track</button><button class="lx" data-editfixed="' + esc(e.id) + '">Edit</button></div></div>' +
+        (e.endDate ? "" : '<div class="s" style="margin-top:6px;color:var(--warn)">No end date — set one so it stops and counts toward debt-free.</div>') + '</div>';
+    }).join("");
     var loansSection = '<div class="sec"><span class="tab">Loans & EMIs</span><span class="more" data-act="addLiab">+ Add</span></div>' +
       (d.answers && d.answers.debtFree && d.answers.debtFree !== "—" ? '<div class="psub" style="padding:2px 0 8px">Debt-free by <b class="serif" style="color:var(--ink)">' + esc(d.answers.debtFree) + '</b>' + (d.answers.debtFreeNote ? " · " + esc(d.answers.debtFreeNote) : "") + '</div>' : "") +
-      (liabs.length ? liabRows : '<div class="psub" style="padding:8px 0">No loans or EMIs yet. Add one — paying an EMI debits your account and reduces the balance in one go, and Bling works out your debt-free date.</div>');
+      liabRows + emiRows +
+      (!liabs.length && !emis.length ? '<div class="psub" style="padding:8px 0">No loans or EMIs yet. Add one — paying an EMI debits your account and reduces the balance in one go, and Bling works out your debt-free date.</div>' : "");
     return loansSection +
       '<div class="sec"><span class="tab">Fixed this month</span><span class="more">' + inr(fixedTotal) + ' total</span></div>' + fx +
       '<button class="addbtn" data-act="addFixed">' + icon("plus") + 'Add a fixed expense</button>' +
@@ -690,7 +702,8 @@
   }
   function fixedModal() {
     var accs = state.data.accountsList || [];
-    var F = state.editFixedId ? (state.data.fixed || []).filter(function (x) { return String(x.id) === String(state.editFixedId); })[0] : null;
+    var allFixed = (state.data.fixed || []).concat((state.data.simpleEmis || []).map(function (e) { return { id: e.id, name: e.name, amt: e.emi, category: "EMI / Loan", day: e.dueDay, endDate: e.endDate }; }));
+    var F = state.editFixedId ? allFixed.filter(function (x) { return String(x.id) === String(state.editFixedId); })[0] : null;
     var fixedCats = ["Rent", "EMI / Loan", "Bills & utilities", "Subscriptions", "Other"];
     if (F && F.category && fixedCats.indexOf(F.category) === -1) fixedCats.unshift(F.category);
     return '<div class="modal"><button class="backdrop" data-act="closeFixed" aria-label="Close"></button><div class="sheet">' +
@@ -710,14 +723,17 @@
   function liabModal() {
     var accs = state.data.accountsList || [];
     var L = state.editLiabId ? (state.data.liabilities || []).filter(function (x) { return String(x.id) === String(state.editLiabId); })[0] : null;
+    var cf = (!L && state.convertFrom) ? state.convertFrom : null;   // converting a tagged EMI
+    if (cf) L = { name: cf.name, type: "emi", emi: cf.emi, dueDay: cf.dueDay, endDate: cf.endDate, onAccount: "", payFrom: cf.payFrom, total: "", outstanding: "" };
     var onAccId = ""; if (L) { var oa = accs.filter(function (a) { return a.name === L.onAccount; })[0]; onAccId = oa ? oa.id : ""; }
-    var pfId = ""; if (L) { var pf = accs.filter(function (a) { return a.name === L.payFrom; })[0]; pfId = pf ? pf.id : ""; }
+    var pfId = cf ? cf.account_id : ""; if (!pfId && L) { var pf = accs.filter(function (a) { return a.name === L.payFrom; })[0]; pfId = pf ? pf.id : ""; }
     var opt = function (list, sel) { return list.map(function (a) { return '<option value="' + esc(a.id) + '"' + (a.id === sel ? " selected" : "") + '>' + esc(a.name) + '</option>'; }).join(""); };
     var creditLoan = accs.filter(function (a) { return a.type === "credit" || a.type === "loan"; }); if (!creditLoan.length) creditLoan = accs;
     var banks = accs.filter(function (a) { return a.type === "bank" || a.type === "cash"; }); if (!banks.length) banks = accs;
     return '<div class="modal"><button class="backdrop" data-act="closeLiab" aria-label="Close"></button><div class="sheet">' +
-      '<div class="mhead"><h2>' + (L ? "Edit" : "Add") + ' loan / EMI</h2><button class="x" data-act="closeLiab" aria-label="Close">✕</button></div>' +
-      '<form data-form="liab">' + (L ? '<input type="hidden" name="id" value="' + esc(L.id) + '">' : "") +
+      '<div class="mhead"><h2>' + (cf ? "Track EMI as loan" : (state.editLiabId ? "Edit" : "Add") + " loan / EMI") + '</h2><button class="x" data-act="closeLiab" aria-label="Close">✕</button></div>' +
+      (cf ? '<div class="psub" style="padding:2px 0 4px">Add the card it sits on, total & outstanding so Bling can track payoff and debt-free.</div>' : "") +
+      '<form data-form="liab">' + (state.editLiabId ? '<input type="hidden" name="id" value="' + esc(state.editLiabId) + '">' : "") +
       '<label class="field"><span>Name (what / vendor)</span><input name="name" required value="' + esc(L ? L.name : "") + '" placeholder="e.g. iPhone EMI, Home loan"></label>' +
       '<div class="kindtoggle"><label><input type="radio" name="type" value="emi"' + (!L || L.type === "emi" ? " checked" : "") + '> EMI</label><label><input type="radio" name="type" value="loan"' + (L && L.type === "loan" ? " checked" : "") + '> Loan</label></div>' +
       '<label class="field"><span>Sits on (card / loan account)</span><select name="account">' + opt(creditLoan, onAccId) + '</select></label>' +
@@ -856,7 +872,7 @@
   }
 
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby],[data-editliab],[data-payemi],[data-wsm],[data-editfixed],[data-delcap]");
+    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby],[data-editliab],[data-payemi],[data-wsm],[data-editfixed],[data-delcap],[data-convertloan]");
     if (!t) return;
     if (t.dataset.go) { state.screen = t.dataset.go; render(); }
     else if (t.dataset.wgo) { state.wboard = t.dataset.wgo; render(); }
@@ -889,7 +905,8 @@
     else if (t.dataset.act === "deleteTxn") { deleteTxn(); }
     else if (t.dataset.act === "addLiab") { state.addingLiab = true; state.editLiabId = null; render(); }
     else if (t.dataset.editliab) { state.editLiabId = t.dataset.editliab; state.addingLiab = true; render(); }
-    else if (t.dataset.act === "closeLiab") { state.addingLiab = false; state.editLiabId = null; render(); }
+    else if (t.dataset.act === "closeLiab") { state.addingLiab = false; state.editLiabId = null; state.convertFrom = null; render(); }
+    else if (t.dataset.convertloan) { state.convertFrom = (state.data.simpleEmis || []).filter(function (x) { return String(x.id) === String(t.dataset.convertloan); })[0] || null; state.editLiabId = null; state.addingLiab = true; render(); }
     else if (t.dataset.act === "deleteLiab") { deleteLiab(); }
     else if (t.dataset.payemi) { payEmi(t.dataset.payemi); }
     else if (t.dataset.wsm) { state.wspendMode = t.dataset.wsm; render(); }
@@ -974,10 +991,14 @@
       total: Number(fd.get("total")), outstanding: fd.get("outstanding") ? Number(fd.get("outstanding")) : undefined,
       emiAmount: Number(fd.get("emi")), dueDay: Number(fd.get("dueDay") || 5), endDate: fd.get("endDate"), note: fd.get("note")
     };
-    state.addingLiab = false; state.editLiabId = null;
+    var convertId = state.convertFrom ? state.convertFrom.id : null;
+    state.addingLiab = false; state.editLiabId = null; state.convertFrom = null;
     if (!connected()) { render(); toast("Saved (demo — connect to persist)"); return; }
     render(); toast("Saving…");
-    api("upsert_liability", payload).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+    api("upsert_liability", payload).then(function () {
+      // if this was a conversion from a tagged EMI, retire the recurring so it isn't double-counted
+      if (convertId) return api("delete_recurring", { id: convertId });
+    }).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
   }
   function deleteTxn() {
     var id = state.editId; if (!id) return;

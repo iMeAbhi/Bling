@@ -238,7 +238,10 @@ function buildSnapshot_() {
   var mmm = Utilities.formatDate(new Date(), tz, "MMM"), todayD = new Date();
   function recEnded(r) { return r.end_date && new Date(r.end_date) < todayD; }
   var recActive = recurring.filter(function (r) { return !recEnded(r); });
-  var fixed = recActive.map(function (r) {
+  var emiRe = /emi|loan/i;
+  var fixedRecs = recActive.filter(function (r) { return !emiRe.test(String(r.category || "")); });
+  var emiRecs = recActive.filter(function (r) { return emiRe.test(String(r.category || "")); });
+  var fixed = fixedRecs.map(function (r) {
     var settled = String(r.settled_month) === monthKey;
     return {
       id: String(r.id), name: r.name, amt: num_(r.amount), category: String(r.category || ""),
@@ -246,7 +249,11 @@ function buildSnapshot_() {
       status: settled ? "ok" : "up", day: Number(r.due_day) || "", endDate: String(r.end_date || "")
     };
   });
-  var fixedTotal = fixed.reduce(function (s, f) { return s + f.amt; }, 0);
+  // tagged EMIs not yet promoted to a tracked loan — shown in the Loans section
+  var simpleEmis = emiRecs.map(function (r) {
+    return { id: String(r.id), name: String(r.name), emi: num_(r.amount), payFrom: acctName_(accounts, r.account_id) || "", account_id: String(r.account_id || ""), dueDay: Number(r.due_day || 1), endDate: String(r.end_date || "") };
+  });
+  var fixedTotal = recActive.reduce(function (s, r) { return s + num_(r.amount); }, 0);   // all obligations for splurge/forecast
   var upcoming = recActive.filter(function (r) { return String(r.settled_month) !== monthKey; })
     .map(function (r) { return { date: ordinal_(r.due_day) + " " + mmm, day: Number(r.due_day), name: r.name, acct: acctName_(accounts, r.account_id) || "", amt: -Math.abs(num_(r.amount)) }; });
 
@@ -296,6 +303,7 @@ function buildSnapshot_() {
     year: yearSummary_(txns, tz),
     caps: budgets.map(function (b) { return { name: String(b.name), cap: num_(b.cap) }; }),
     liabilities: liabilities,
+    simpleEmis: simpleEmis,
     fixed: fixed,
     detects: detectPatterns_(txns, recurring, accounts, tz),
     suggest: suggestBudgets_(txns, budgets, tz),
