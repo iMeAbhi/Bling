@@ -37,6 +37,16 @@ var LIQUID_TYPES = { bank: true, cash: true, wallet: true };
 var INVEST_TYPES = { investment: true, mf: true, equity: true, gold: true, fd: true, ppf: true, epf: true, nps: true };
 var OWED_TYPES = { credit: true, credit_card: true, loan: true };
 function isCard_(t) { return t === "credit" || t === "credit_card"; }
+/* A real expense — excludes money moved to investments, between your own
+   accounts, or paying down a card. Keeps spend/budgets/trends honest. */
+function isSpend_(t) {
+  if (num_(t.amount) >= 0) return false;
+  var k = String(t.kind || "");
+  if (k === "transfer" || k === "investment" || k === "emi_payment") return false;
+  var c = String(t.category || "").toLowerCase();
+  if (c === "investments" || c === "investment" || c === "transfer" || c === "cc payment" || c === "credit card bill") return false;
+  return true;
+}
 
 /* ---------------- menu ---------------- */
 function onOpen() {
@@ -196,8 +206,8 @@ function buildSnapshot_() {
   function spentIn(pred) {
     return Math.abs(txns.filter(pred).reduce(function (s, t) { return s + Math.min(0, num_(t.amount)); }, 0));
   }
-  var monthSpent = spentIn(function (t) { return t.kind !== "transfer" && dateKey_(t.date, tz, "yyyy-MM") === monthKey; });
-  var todaySpent = spentIn(function (t) { return t.kind !== "transfer" && dateKey_(t.date, tz, "yyyy-MM-dd") === todayKey; });
+  var monthSpent = spentIn(function (t) { return isSpend_(t) && dateKey_(t.date, tz, "yyyy-MM") === monthKey; });
+  var todaySpent = spentIn(function (t) { return isSpend_(t) && dateKey_(t.date, tz, "yyyy-MM-dd") === todayKey; });
   var monthIncome = txns.filter(function (t) { return t.kind !== "transfer" && num_(t.amount) > 0 && dateKey_(t.date, tz, "yyyy-MM") === monthKey; }).reduce(function (s, t) { return s + num_(t.amount); }, 0);
   var monthDelta = Math.round(monthIncome - monthSpent);   // net cash flow this month
 
@@ -208,7 +218,7 @@ function buildSnapshot_() {
 
   var cats = budgets.map(function (b) {
     var spent = Math.abs(txns.filter(function (t) {
-      return t.kind !== "transfer" && String(t.category) === String(b.name) && dateKey_(t.date, tz, "yyyy-MM") === monthKey;
+      return isSpend_(t) && String(t.category) === String(b.name) && dateKey_(t.date, tz, "yyyy-MM") === monthKey;
     }).reduce(function (s, t) { return s + Math.min(0, num_(t.amount)); }, 0));
     return { name: b.name, spent: spent, cap: num_(b.cap) };
   });
@@ -229,9 +239,8 @@ function buildSnapshot_() {
     if (t.kind === "transfer") return;
     var k = dateKey_(t.date, tz, "yyyy-MM"); if (!k) return;
     var m = monthly[k] || (monthly[k] = { spent: 0, count: 0, cats: {} });
-    var neg = Math.min(0, num_(t.amount));
     m.count += 1;
-    if (neg < 0) { m.spent += -neg; var c = String(t.category || "Uncategorized"); m.cats[c] = (m.cats[c] || 0) + (-neg); }
+    if (isSpend_(t)) { var v = -num_(t.amount); m.spent += v; var c = String(t.category || "Uncategorized"); m.cats[c] = (m.cats[c] || 0) + v; }
   });
   // average monthly spend over COMPLETE months (exclude the current partial one),
   // last 6 — used for emergency buffer and jobless runway, not the partial month
@@ -364,11 +373,11 @@ function yearSummary_(txns, tz) {
   var year = Utilities.formatDate(new Date(), tz, "yyyy");
   var months = [], labels = "JFMAMJJASOND".split(""), total = 0, byMonth = new Array(12).fill(0);
   txns.forEach(function (t) {
-    if (t.kind === "transfer") return;
+    if (!isSpend_(t)) return;
     if (dateKey_(t.date, tz, "yyyy") !== year) return;
     var m = Number(dateKey_(t.date, tz, "MM")) - 1;
-    var neg = Math.min(0, num_(t.amount));
-    byMonth[m] += Math.abs(neg); total += Math.abs(neg);
+    var v = -num_(t.amount);
+    byMonth[m] += v; total += v;
   });
   var max = Math.max.apply(null, byMonth) || 1, hi = byMonth.indexOf(max);
   months = byMonth.map(function (v) { return Math.max(6, Math.round(v / max * 100)); });
