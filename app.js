@@ -346,6 +346,7 @@
       '<div class="big serif num">' + inr(d.emergency.have) + '</div><div class="track"><i style="width:' + d.emergency.pct + '%"></i></div>' +
       '<div class="s">' + d.emergency.pct + '% of a 6× buffer — <b style="color:var(--ink)">' + shortInr(d.emergency.short) + '</b> short of secure.</div></div>' +
       cardsHtml(d) +
+      investBody(d) +
       '</section>';
   }
   function deltaLine(amt, pct) {
@@ -380,10 +381,7 @@
       return '<div class="col' + (h === 100 ? " hi" : "") + '"><i style="height:' + h + '%"></i><span>' + d.week.labels[i] + '</span></div>';
     }).join("");
     return '<section class="screen" data-s="spend">' +
-      '<div class="h1">Spend</div><div class="psub">Track spending, or plan your budget</div>' +
-      '<div class="seg"><button class="' + (state.spendMode === "track" ? "on" : "") + '" data-mode="track">Track</button><button class="' + (state.spendMode === "plan" ? "on" : "") + '" data-mode="plan">Fixed & budgets</button><button class="' + (state.spendMode === "trends" ? "on" : "") + '" data-mode="trends">Trends</button></div>' +
-      /* TRACK */
-      '<div class="mv' + (state.spendMode === "track" ? " on" : "") + '" data-m="track">' +
+      '<div class="h1">Spend</div><div class="psub">Where your money goes</div>' +
       (uncatList().length ? '<div class="reviewbar"><div><div class="t">' + uncatList().length + ' uncategorised</div><div class="s">Assign them so budgets & patterns work</div></div><button data-act="review">Review</button></div>' : "") +
       searchBox() +
       '<div class="period">' + ["today", "week", "month", "year"].map(function (p) {
@@ -418,11 +416,18 @@
       '<div class="ybars">' + yb + '</div>' +
       (d.year.top.length ? '<div class="sec"><span class="tab">Top categories · year</span></div>' + d.year.top.map(function (t) { return ansLine(t.name, t.note || "", shortInr(t.amt)); }).join("") : "") +
       '<div class="sec"><span class="tab">Transactions this year</span></div>' + txnList(txnsFor("year"), 80) + '</div>' +
-      '</div>' +
-      /* PLAN */
-      '<div class="mv' + (state.spendMode === "plan" ? " on" : "") + '" data-m="plan">' + planHtml(d) + '</div>' +
-      /* TRENDS */
-      '<div class="mv' + (state.spendMode === "trends" ? " on" : "") + '" data-m="trends">' + trendView(d) + '</div>' +
+      '</section>';
+  }
+  /* ---------- Budgets tab (was Spend → Fixed & budgets) ---------- */
+  function scBudgets(d) {
+    return '<section class="screen" data-s="budgets"><div class="h1">Budgets</div><div class="psub">What\'s committed, what\'s free</div>' +
+      planHtml(d) + '</section>';
+  }
+  /* ---------- Insights tab (Trends + forecast + AI briefing) ---------- */
+  function scInsights(d) {
+    return '<section class="screen" data-s="insights"><div class="h1">Insights</div><div class="psub">Trends, forecasts & your briefing</div>' +
+      predictBody(d) +
+      '<div class="sec"><span class="tab">Trends</span></div>' + trendView(d) +
       '</section>';
   }
 
@@ -505,29 +510,23 @@
   }
   function splurgeRow(l, v) { return '<div class="row"><span>' + esc(l) + '</span><b class="num">' + inr(v) + '</b></div>'; }
 
-  function scInvest(d) {
-    var iv = d.invest;
-    var hold = iv.holdings.map(function (h) {
+  function investBody(d) {
+    var iv = d.invest; if (!iv || !iv.value) return "";
+    var hold = (iv.holdings || []).map(function (h) {
       return '<div class="ans"><div class="l"><div class="t">' + esc(h.name) + '</div><div class="s ' + h.retCls + '">' + esc(h.ret) + '</div></div><div class="dotlead"></div><div class="k serif num">' + shortInr(h.val) + '</div></div>';
     }).join("");
-    var perf = iv.xirr ? '<div class="delta pos num"><span class="serif">↑</span> ' + inr(iv.gain) + ' · XIRR ' + iv.xirr + '%</div>'
-      : '<div class="psub" style="padding-top:6px">Value entered manually · add invested amount & returns to see XIRR</div>';
-    return '<section class="screen" data-s="invest"><div class="h1">Invest</div><div class="psub">Your holdings</div>' +
-      '<div class="hero" style="padding-top:16px"><span class="tab">Portfolio Value</span><div class="nw sm serif num">' + inr(iv.value) + '</div>' + perf + '</div>' +
-      '<div class="sec"><span class="tab">Holdings</span></div>' + hold +
-      '<div class="callout" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Concentration</span><div class="s" style="margin-top:8px;color:var(--ink)">' + esc(iv.concentration) + '</div></div></section>';
+    return '<div class="sec"><span class="tab">Investments</span><span class="more num">' + shortInr(iv.value) + (iv.xirr ? ' · XIRR ' + iv.xirr + '%' : "") + '</span></div>' + hold +
+      (iv.concentration ? '<div class="callout" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Concentration</span><div class="s" style="margin-top:8px;color:var(--ink)">' + esc(iv.concentration) + '</div></div>' : "");
   }
-
-  function scPredict(d) {
+  function predictBody(d) {
     var p = d.predict;
-    return '<section class="screen" data-s="predict"><div class="h1">Predict</div><div class="psub">Forecasts from your live numbers</div>' +
-      '<div class="brief"><div class="kick">Intelligence Briefing</div>' +
+    return '<div class="brief"><div class="kick">Intelligence Briefing</div>' +
       (state.briefing ? '<p style="font-size:14px;line-height:1.55;color:var(--ink)">' + esc(state.briefing) + '</p>' : '<h3>' + esc(p.brief.head) + '</h3><p>' + p.brief.body + '</p>') +
       '<button class="go" data-act="briefing">' + (state.briefingLoading ? "Thinking…" : "✦ Generate briefing") + '</button></div>' +
       '<div class="sec"><span class="tab">Forecast</span></div>' +
       ansLine("Next month's spend", "from commitments · ±8%", shortInr(p.nextMonth)) +
       '<div class="ans"><div class="l"><div class="t">This cycle\'s card bill</div><div class="s">spend + EMIs to hit</div></div><div class="dotlead"></div><div class="k serif num neg">' + inr(p.cardBill) + '</div></div>' +
-      '<div class="sec"><span class="tab">Coming up · 14 days</span><span class="more">All</span></div>' + moneyLines(d.upcoming.slice(0, 4)) + '</section>';
+      '<div class="sec"><span class="tab">Coming up · 30 days</span></div>' + moneyLines(d.upcoming.slice(0, 8));
   }
 
   function syncSetup(d) {
@@ -575,11 +574,19 @@
   function webShell(d) {
     return '<div class="web"><header class="w-mast"><div class="title"><span class="m"></span>The Bling Ledger</div>' +
       '<div class="edition">Personal Edition · ' + esc(d.generatedAt) + ' · No. 09</div></header>' +
-      '<div class="w-navbar"><nav>' + [["overview", "Overview"], ["spend", "Spend"], ["invest", "Invest"], ["predict", "Predict"], ["you", "Account"]].map(function (b) {
+      '<div class="w-navbar"><nav>' + [["overview", "Overview"], ["spend", "Spend"], ["budgets", "Budgets"], ["insights", "Insights"], ["you", "Account"]].map(function (b) {
         return '<a class="' + (state.wboard === b[0] ? "on" : "") + '" data-wgo="' + b[0] + '">' + b[1] + '</a>';
       }).join("") + '</nav><div style="display:flex;align-items:center;gap:16px">' + (d.stale ? '<span class="ribbon"><span class="d"></span>' + esc(d.stale) + '</span>' : "") +
       '<button class="ttoggle" data-act="theme" aria-label="Toggle theme">' + icon("moon") + '</button></div></div>' +
-      wbOverview(d) + wbSpend(d) + wbInvest(d) + wbPredict(d) + wbYou(d) + '</div>';
+      wbOverview(d) + wbSpend(d) + wbBudgets(d) + wbInsights(d) + wbYou(d) + '</div>';
+  }
+  function wbBudgets(d) {
+    return '<div class="wboard' + (state.wboard === "budgets" ? " on" : "") + '" data-b="budgets"><div class="lede-lbl" style="padding-top:18px">Budgets · What\'s committed vs free</div>' +
+      '<div style="max-width:860px;margin-top:12px">' + planHtml(d) + '</div></div>';
+  }
+  function wbInsights(d) {
+    return '<div class="wboard' + (state.wboard === "insights" ? " on" : "") + '" data-b="insights"><div class="w-grid" style="grid-template-columns:1.2fr 1fr"><div class="w-col lead">' + predictBody(d) + '</div>' +
+      '<div class="w-col"><div class="colhead">Trends</div>' + trendView(d) + '</div></div></div>';
   }
   function ansWeb(t, s, k, cls) { return '<div class="ans-web"><div><div class="t">' + esc(t) + '</div>' + (s ? '<div class="s">' + esc(s) + '</div>' : "") + '</div><div class="k num ' + (cls || "") + '">' + esc(k) + '</div></div>'; }
   function wbOverview(d) {
@@ -629,10 +636,9 @@
         : trackGrid;
     return '<div class="wboard' + (state.wboard === "spend" ? " on" : "") + '" data-b="spend">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 0 0"><div class="lede-lbl">Spending & Budget</div>' +
-      (wmode === "track" ? '<div style="display:flex;gap:6px;background:var(--paper-2);border:1px solid var(--rule);padding:4px;border-radius:3px">' + pill + '</div>' : "") + '</div>' +
-      modeToggle +
+      '<div style="display:flex;gap:6px;background:var(--paper-2);border:1px solid var(--rule);padding:4px;border-radius:3px">' + pill + '</div></div>' +
       (uncatList().length ? '<div class="reviewbar"><div><div class="t">' + uncatList().length + ' uncategorised</div><div class="s">Assign them so budgets & patterns work</div></div><button data-act="review">Review</button></div>' : "") +
-      body + '</div>';
+      trackGrid + '</div>';
   }
   function wbInvest(d) {
     var iv = d.invest;
@@ -759,6 +765,8 @@
       plus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
       home: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10l9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
       spend: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>',
+      budgets: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h12"/><circle cx="19" cy="18" r="2"/></svg>',
+      insights: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 5-7"/></svg>',
       invest: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>',
       predict: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l2.4 5 5.6.6-4 4 1 5.4-5-2.8-5 2.8 1-5.4-4-4 5.6-.6z"/></svg>',
       you: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>'
@@ -768,10 +776,10 @@
 
   /* ---------- render ---------- */
   function phoneShell(d) {
-    var screens = { home: scHome, spend: scSpend, invest: scInvest, predict: scPredict, you: scYou };
-    // render only the active screen; mark it .on for the reveal animation
+    var screens = { home: scHome, spend: scSpend, budgets: scBudgets, insights: scInsights, you: scYou };
+    if (!screens[state.screen]) state.screen = "home";
     var body = screens[state.screen](d).replace('class="screen"', 'class="screen on"');
-    var nav = ["home", "spend", "invest", "predict", "you"].map(function (n) {
+    var nav = ["home", "spend", "budgets", "insights", "you"].map(function (n) {
       return '<button class="' + (state.screen === n ? "on" : "") + '" data-go="' + n + '"><span class="u"></span>' + icon(n) + n.charAt(0).toUpperCase() + n.slice(1) + '</button>';
     }).join("");
     return '<div class="phone"><header class="mast"><div class="brand"><span class="m"></span>BLING</div>' +
