@@ -47,6 +47,7 @@ function onOpen() {
     .addSeparator()
     .addItem("Install 15-min Gmail sync", "installGmailSync")
     .addItem("Sync Gmail now", "syncGmailAlerts")
+    .addItem("Load bank SMS rules", "seedBankRules")
     .addSeparator()
     .addItem("Auto-categorise transactions", "autoCategorize")
     .addSeparator()
@@ -73,6 +74,7 @@ function setupBling() {
     if (!getConfig_("fuzzy_minutes")) setConfig_("fuzzy_minutes", "10");
     seedParserTemplates_();
     seedCategoryRules_();
+    seedRealParserRules_();
     ss.toast("Bling is set up. Run createDeviceToken() next.", "Bling", 6);
   } finally {
     lock.releaseLock();
@@ -774,6 +776,42 @@ function autoCategorize_() {
     if (cat && cat !== cur) { writeObjectAt_("Transactions", i + 2, Object.assign({}, t, { category: cat, updated_at: nowIso_() })); changed++; }
   });
   return { categorised: changed };
+}
+/* Enabled parser rules tuned to real Indian bank SMS formats (Kotak, SBI,
+   ICICI credit card incl. bill payment, HDFC debit/credit). Idempotent. */
+function seedBankRules() { ensureInstalled_(); var n = seedRealParserRules_(); SpreadsheetApp.getActiveSpreadsheet().toast(n + " bank rules ready.", "Bling", 5); }
+function seedRealParserRules_() {
+  var now = nowIso_(), added = 0;
+  var R = [
+    { id: "pr_kotak_sms", bank: "Kotak (SMS)", source: "sms", sender_pattern: "", subject_pattern: "",
+      body_regex: "Sent Rs\\.?\\s*([0-9,]+(?:\\.\\d{1,2})?)\\s+from Kotak Bank A(?:C|/c)\\s*X?(\\d{4})\\s+to\\s+(.+?)\\s+on",
+      field_map_json: JSON.stringify({ amount: 1, last4: 2, merchant: 3 }), direction: "debit" },
+    { id: "pr_sbi_sms", bank: "SBI (SMS)", source: "sms", sender_pattern: "", subject_pattern: "",
+      body_regex: "A/C\\s*X?(\\d{4})\\s+debited by\\s+([0-9,]+(?:\\.\\d{1,2})?)\\s+on date\\s+\\S+\\s+trf to\\s+(.+?)\\s+Refno",
+      field_map_json: JSON.stringify({ last4: 1, amount: 2, merchant: 3 }), direction: "debit" },
+    { id: "pr_icici_cc_spent", bank: "ICICI card spent (SMS)", source: "sms", sender_pattern: "", subject_pattern: "",
+      body_regex: "INR\\s*([0-9,]+(?:\\.\\d{1,2})?)\\s+spent using ICICI Bank Card\\s*XX?(\\d{4})\\s+on\\s+\\S+\\s+on\\s+(.+?)\\.\\s*Avl",
+      field_map_json: JSON.stringify({ amount: 1, last4: 2, merchant: 3 }), direction: "debit" },
+    { id: "pr_icici_cc_upi", bank: "ICICI card UPI (SMS)", source: "sms", sender_pattern: "", subject_pattern: "",
+      body_regex: "ICICI Bank Credit Card\\s*XX?(\\d{4})\\s+debited for INR\\s*([0-9,]+(?:\\.\\d{1,2})?)\\s+on\\s+\\S+\\s+for\\s+(?:UPI-\\d+-)?(.+?)(?:\\.|$)",
+      field_map_json: JSON.stringify({ last4: 1, amount: 2, merchant: 3 }), direction: "debit" },
+    { id: "pr_icici_cc_pay", bank: "ICICI card payment (SMS)", source: "sms", sender_pattern: "", subject_pattern: "",
+      body_regex: "Payment of Rs\\s*([0-9,]+(?:\\.\\d{1,2})?)\\s+has been received on your ICICI Bank Credit Card\\s*XX?(\\d{4})\\s+through\\s+(.+?)\\s+on",
+      field_map_json: JSON.stringify({ amount: 1, last4: 2, merchant: 3, category: "CC payment" }), direction: "credit" },
+    { id: "pr_hdfc_sms", bank: "HDFC debit (SMS)", source: "sms", sender_pattern: "", subject_pattern: "",
+      body_regex: "Sent Rs\\.?\\s*([0-9,]+(?:\\.\\d{1,2})?)\\s+From HDFC Bank A/C\\s*\\*?(\\d{4})\\s+To\\s+(.+?)\\s+On\\s",
+      field_map_json: JSON.stringify({ amount: 1, last4: 2, merchant: 3 }), direction: "debit" },
+    { id: "pr_hdfc_credit", bank: "HDFC credit (SMS)", source: "sms", sender_pattern: "", subject_pattern: "",
+      body_regex: "Rs\\.?\\s*([0-9,]+(?:\\.\\d{1,2})?)\\s+credited to HDFC Bank A/c\\s*XX?(\\d{4})\\s+on\\s+\\S+\\s+from VPA\\s+(\\S+)",
+      field_map_json: JSON.stringify({ amount: 1, last4: 2, merchant: 3 }), direction: "credit" }
+  ];
+  R.forEach(function (r) {
+    r.enabled = true; r.quarantined = false; r.version = 1; r.updated_at = now;
+    var f = findObject_("ParserRules", "id", r.id);
+    if (f) writeObjectAt_("ParserRules", f.rowIndex, Object.assign({}, f.object, r)); else { appendObject_("ParserRules", r); }
+    added++;
+  });
+  return added;
 }
 function findAccountByLast4_(last4) { if (!last4) return null; return readObjects_("Accounts").find(function (a) { return truthy_(a.active) && String(a.last4) === String(last4); }) || null; }
 function safeTest_(pattern, value) { if (!pattern) return true; if (String(pattern).length > 1000) throw new Error("pattern too long"); return new RegExp(String(pattern), "i").test(String(value)); }
