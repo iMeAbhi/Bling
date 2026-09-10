@@ -33,9 +33,10 @@ var TABLES = {
 };
 
 /* account types → how they roll up into net worth */
-var LIQUID_TYPES = { bank: true, cash: true };
+var LIQUID_TYPES = { bank: true, cash: true, wallet: true };
 var INVEST_TYPES = { investment: true, mf: true, equity: true, gold: true, fd: true, ppf: true, epf: true, nps: true };
-var OWED_TYPES = { credit: true, loan: true };
+var OWED_TYPES = { credit: true, credit_card: true, loan: true };
+function isCard_(t) { return t === "credit" || t === "credit_card"; }
 
 /* ---------------- menu ---------------- */
 function onOpen() {
@@ -122,6 +123,7 @@ function doPost(e) {
         case "delete_transaction": return json_({ ok: true, data: deleteTransaction_(payload.id) });
         case "upsert_account": return json_({ ok: true, data: upsertAccount_(payload) });
         case "upsert_budget": return json_({ ok: true, data: upsertObject_("Budgets", "id", withStamp_(payload, payload.id ? "upd" : "new", "bud")) });
+        case "delete_budget": { var bf = findObject_("Budgets", "name", payload.name) || findObject_("Budgets", "id", payload.id); if (bf) { table_("Budgets").deleteRow(bf.rowIndex); } return json_({ ok: true, data: { deleted: true } }); }
         case "upsert_recurring": return json_({ ok: true, data: upsertObject_("Recurring", "id", withStamp_(payload, payload.id ? "upd" : "new", "rec")) });
         case "confirm_recurring": return json_({ ok: true, data: confirmRecurring_(payload) });
         case "set_budget_cap": return json_({ ok: true, data: setBudgetCap_(payload) });
@@ -193,6 +195,8 @@ function buildSnapshot_() {
   }
   var monthSpent = spentIn(function (t) { return t.kind !== "transfer" && dateKey_(t.date, tz, "yyyy-MM") === monthKey; });
   var todaySpent = spentIn(function (t) { return t.kind !== "transfer" && dateKey_(t.date, tz, "yyyy-MM-dd") === todayKey; });
+  var monthIncome = txns.filter(function (t) { return t.kind !== "transfer" && num_(t.amount) > 0 && dateKey_(t.date, tz, "yyyy-MM") === monthKey; }).reduce(function (s, t) { return s + num_(t.amount); }, 0);
+  var monthDelta = Math.round(monthIncome - monthSpent);   // net cash flow this month
 
   var budget = num_(getConfig_("monthly_budget")) || 72000;
   var daysLeft = daysLeftInMonth_(tz);
@@ -261,9 +265,13 @@ function buildSnapshot_() {
   var activeEmis = liabilities.filter(function (l) { return !l.ended && l.outstanding > 0.5 && l.emi > 0; });
   activeEmis.forEach(function (l) { upcoming.push({ date: ordinal_(l.dueDay) + " " + mmm, day: l.dueDay, name: "EMI · " + l.name, acct: l.payFrom, amt: -l.emi }); });
   upcoming.sort(function (a, b) { return (a.day || 0) - (b.day || 0); });
-  /* debt-free = latest end date among active EMIs/loans still owing */
-  var endDates = activeEmis.map(function (l) { return l.endDate; }).filter(Boolean).sort();
-  var debtFree = endDates.length ? Utilities.formatDate(new Date(endDates[endDates.length - 1]), tz, "MMM yyyy") : (activeEmis.length ? "—" : "Debt-free");
+  /* debt-free = latest end date among active loans/EMIs still owing —
+     from the Liabilities tab AND any recurring tagged EMI/Loan with an end date */
+  var recEmiEnds = recActive.filter(function (r) { return /emi|loan/i.test(String(r.category || "")) && r.end_date; }).map(function (r) { return String(r.end_date); });
+  var endDates = activeEmis.map(function (l) { return l.endDate; }).filter(Boolean).concat(recEmiEnds).sort();
+  var recEmiOpen = recActive.filter(function (r) { return /emi|loan/i.test(String(r.category || "")); }).length;
+  var debtFree = endDates.length ? Utilities.formatDate(new Date(endDates[endDates.length - 1]), tz, "MMM yyyy")
+    : ((activeEmis.length || recEmiOpen) ? "Add end dates" : "Debt-free");
 
   /* splurge / safe-to-spend */
   var takehome = num_(getConfig_("takehome")) || 0;
@@ -275,8 +283,8 @@ function buildSnapshot_() {
   return {
     generatedAt: Utilities.formatDate(new Date(), tz, "EEE d MMM"),
     stale: "",
-    netWorth: netWorth, deltaMonth: 0, deltaPct: 0,
-    liquid: liquid, invested: invested, owed: owed,
+    netWorth: netWorth, deltaMonth: monthDelta, deltaPct: netWorth ? Math.round(monthDelta / Math.abs(netWorth) * 1000) / 10 : 0,
+    liquid: liquid, invested: invested, owed: owed, cards: cardsSummary_(accounts),
     answers: { safeToday: Math.max(0, safeToday), debtFree: debtFree, debtFreeNote: activeEmis.length ? activeEmis.length + " active loans/EMIs" : "", runway: runway_(liquid, monthSpent), runwayNote: "liquid ÷ monthly spend", cardBill: cardBill_(accounts) },
     allocation: allocation,
     emergency: emergency_(liquid, monthSpent, getConfig_),
@@ -314,7 +322,15 @@ function allocLabel_(type) {
   return "Equity · MF";
 }
 function acctName_(accounts, id) { for (var i = 0; i < accounts.length; i++) if (String(accounts[i].id) === String(id)) return accounts[i].name; return ""; }
-function cardBill_(accounts) { return Math.abs(accounts.filter(function (a) { return a.type === "credit"; }).reduce(function (s, a) { return s + num_(a.balance); }, 0)); }
+function cardBill_(accounts) { return Math.abs(accounts.filter(function (a) { return isCard_(a.type); }).reduce(function (s, a) { return s + num_(a.balance); }, 0)); }
+function cardsSummary_(accounts) {
+  var cards = accounts.filter(function (a) { return isCard_(a.type) && truthy_(a.active); }).map(function (a) {
+    var used = Math.abs(num_(a.balance)), limit = num_(a.limit);
+    return { name: String(a.name), last4: String(a.last4 || ""), used: used, limit: limit, pct: limit ? Math.round(used / limit * 100) : 0 };
+  });
+  var totUsed = cards.reduce(function (s, c) { return s + c.used; }, 0), totLimit = cards.reduce(function (s, c) { return s + c.limit; }, 0);
+  return { list: cards.sort(function (x, y) { return y.pct - x.pct; }), totalUsed: totUsed, totalLimit: totLimit, blended: totLimit ? Math.round(totUsed / totLimit * 100) : 0 };
+}
 function runway_(liquid, monthSpend) { if (!monthSpend) return "—"; return (liquid / monthSpend).toFixed(1) + " mo"; }
 function emergency_(liquid, monthSpend, cfg) {
   var target = monthSpend * 6 || 1;

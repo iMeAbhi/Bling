@@ -30,6 +30,7 @@
     stale: "Figures updated 3 hours ago — tap to reconnect",
     netWorth: 1482340, deltaMonth: 23410, deltaPct: 1.6,
     liquid: 180240, invested: 2141900, owed: 690100,
+    cards: { list: [{ name: "Amex Platinum", last4: "2004", used: 117232, limit: 465000, pct: 25 }, { name: "Amazon ICICI", last4: "2000", used: 11570, limit: 230000, pct: 5 }, { name: "Scapia Federal", last4: "4390", used: 10731, limit: 139000, pct: 8 }], totalUsed: 139533, totalLimit: 834000, blended: 17 },
     answers: { safeToday: 4200, debtFree: "Jan 2031", debtFreeNote: "52 months · avalanche", runway: "12.2 mo", runwayNote: "₹1.82L ÷ essentials", cardBill: 162600 },
     allocation: [
       { name: "Equity · MF", pct: 45, color: "var(--accent)" },
@@ -136,7 +137,7 @@
   try { cached = JSON.parse(localStorage.getItem(SNAP_KEY) || "null"); } catch (e) {}
   var state = {
     screen: "home", spendMode: "track", period: "month", wperiod: "month", wboard: "overview", monthOffset: 0,
-    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All", addingLiab: false, editLiabId: null, wspendMode: "track", addingFixed: false, editFixedId: null, briefing: "", briefingLoading: false,
+    reviewing: false, makeRules: true, doneIds: {}, adding: false, editId: null, txnQuery: "", _focusSearch: false, groupBy: "amount", trendCat: "All", addingLiab: false, editLiabId: null, wspendMode: "track", addingFixed: false, editFixedId: null, briefing: "", briefingLoading: false, editingCaps: false,
     theme: localStorage.getItem(THEME_KEY) || "light",
     blurred: false,
     connection: conn,
@@ -328,7 +329,7 @@
       '<div class="hero"><div class="eyebrow"><span class="tab">Net Worth · Total Position</span>' +
       '<button class="eye" data-act="blur" aria-label="Hide balances">' + icon("eye") + '</button></div>' +
       '<div class="nw serif num' + (state.blurred ? " blur" : "") + '">' + inr(d.netWorth) + '</div>' +
-      '<div class="delta pos num"><span class="serif">↑</span> ' + inr(d.deltaMonth) + ' this month · +' + d.deltaPct + '%</div>' +
+      deltaLine(d.deltaMonth, d.deltaPct) +
       '<div class="trio"><div><span class="tab">Liquid</span><div class="v serif num">' + shortInr(d.liquid) + '</div></div>' +
       '<div><span class="tab">Invested</span><div class="v serif num pos">' + shortInr(d.invested) + '</div></div>' +
       '<div><span class="tab">Owed</span><div class="v serif num neg">' + shortInr(d.owed) + '</div></div></div>' +
@@ -340,7 +341,20 @@
       '<div class="callout"><div class="h"><span class="tab" style="color:var(--ink)">Emergency Fund</span><span class="tagw">VULNERABLE</span></div>' +
       '<div class="big serif num">' + inr(d.emergency.have) + '</div><div class="track"><i style="width:' + d.emergency.pct + '%"></i></div>' +
       '<div class="s">' + d.emergency.pct + '% of a 6× buffer — <b style="color:var(--ink)">' + shortInr(d.emergency.short) + '</b> short of secure.</div></div>' +
+      cardsHtml(d) +
       '</section>';
+  }
+  function deltaLine(amt, pct) {
+    var up = amt >= 0;
+    return '<div class="delta ' + (up ? "pos" : "neg") + ' num"><span class="serif">' + (up ? "↑" : "↓") + '</span> ' + inr(Math.abs(amt)) + ' net this month · ' + (pct >= 0 ? "+" : "") + pct + '%</div>';
+  }
+  function cardsHtml(d) {
+    var cx = d.cards; if (!cx || !cx.list || !cx.list.length) return "";
+    var rows = cx.list.slice(0, 6).map(function (c) {
+      var hot = c.pct >= 30;
+      return '<div class="ab"><span class="nm">' + esc(c.name) + (c.last4 ? ' ··' + esc(c.last4) : "") + '</span><span class="track"><i style="width:' + Math.min(100, c.pct) + '%;background:' + (hot ? "var(--neg)" : "var(--accent)") + '"></i></span><span class="pc num ' + (hot ? "neg" : "") + '">' + c.pct + '%</span></div>';
+    }).join("");
+    return '<div class="sec"><span class="tab">Credit cards</span><span class="more num">' + shortInr(cx.totalUsed) + " / " + shortInr(cx.totalLimit) + ' · ' + cx.blended + '%</span></div>' + rows;
   }
   function ansLine(t, s, k) {
     return '<div class="ans"><div class="l"><div class="t">' + esc(t) + '</div><div class="s">' + esc(s) + '</div></div><div class="dotlead"></div><div class="k serif num">' + esc(k) + '</div></div>';
@@ -390,7 +404,7 @@
       '<div><span class="tab">' + (m.isCur ? "Days left" : "Txns") + '</span><div class="v serif num">' + (m.isCur ? m.daysLeft : m.list.length) + '</div></div></div>' +
       '<div class="projbar"><i style="width:' + (m.budget ? Math.min(100, Math.round(m.spent / m.budget * 100)) : 0) + '%"></i><span class="mark" style="left:100%"></span></div>' +
       (m.isCur ? '<div class="psub" style="padding-top:10px">Projected month-end <b class="serif num" style="color:var(--ink)">' + inr(m.projected) + '</b> of ' + inr(m.budget) + ' budget · avg ' + inr(m.avgDay) + '/day</div>' : '<div class="psub" style="padding-top:10px">' + inr(m.spent) + ' of ' + inr(m.budget) + ' budget</div>') +
-      '<div class="sec"><span class="tab">Category budgets</span><span class="more">Edit caps</span></div>' + catBars +
+      '<div class="sec"><span class="tab">Category budgets</span><span class="more" data-act="editCaps">Edit caps</span></div>' + catBars +
       (m.alert ? '<div class="callout" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="margin-top:8px;color:var(--ink)">' + esc(m.alert) + '</div></div>' : "") +
       '<div class="sec"><span class="tab">Transactions · ' + esc(m.label) + '</span>' + (m.count > m.list.length ? '<span class="more" style="color:var(--ink-faint)">' + m.list.length + ' of ' + m.count + '</span>' : "") + '</div>' + txnList(m.list, 200) +
       (m.count > m.list.length ? '<div class="flow">Totals above cover all ' + m.count + ' transactions; the list shows the most recent ' + m.list.length + '. Open the Sheet for the full ledger.</div>' : "") + '</div>' +
@@ -555,7 +569,7 @@
   function wbOverview(d) {
     return '<div class="wboard' + (state.wboard === "overview" ? " on" : "") + '" data-b="overview"><div class="w-grid">' +
       '<div class="w-col lead"><div class="lede-lbl">Net Worth · Total Position</div><div class="w-nw serif num">' + inr(d.netWorth) + '</div>' +
-      '<div class="w-delta pos num"><span class="serif">↑</span> ' + inr(d.deltaMonth) + ' this month · +' + d.deltaPct + '% · trailing 12-mo high</div>' +
+      '<div class="w-delta ' + (d.deltaMonth >= 0 ? "pos" : "neg") + ' num"><span class="serif">' + (d.deltaMonth >= 0 ? "↑" : "↓") + '</span> ' + inr(Math.abs(d.deltaMonth)) + ' net this month · ' + (d.deltaPct >= 0 ? "+" : "") + d.deltaPct + '%</div>' +
       '<div class="w-trio"><div><span class="tab">Liquid</span><div class="v serif num">' + inr(d.liquid) + '</div></div><div><span class="tab">Invested</span><div class="v serif num pos">' + inr(d.invested) + '</div></div><div><span class="tab">Owed</span><div class="v serif num neg">' + inr(d.owed) + '</div></div></div>' +
       '<div class="colhead">Your questions, answered</div>' +
       ansWeb("Safe to spend today", "After bills, caps & next card bill", inr(d.answers.safeToday)) +
@@ -563,7 +577,8 @@
       ansWeb("Jobless runway", d.answers.runwayNote, d.answers.runway) +
       ansWeb("This cycle's card bill", "spend so far + EMIs to hit", inr(d.answers.cardBill), "neg") + '</div>' +
       '<div class="w-col"><div class="colhead">Allocation <span class="more">Rebalance</span></div>' + allocBars(d.allocation) +
-      '<div class="w-call"><div style="display:flex;justify-content:space-between;align-items:center"><span class="tab" style="color:var(--ink)">Emergency Fund</span><span class="tagw">VULNERABLE</span></div><div class="big num">' + inr(d.emergency.have) + '</div><div class="track"><i style="width:' + d.emergency.pct + '%"></i></div><div class="s" style="font-size:11.5px;color:var(--ink-soft);margin-top:8px">' + d.emergency.pct + '% of a 6× buffer — ' + shortInr(d.emergency.short) + ' short.</div></div></div>' +
+      '<div class="w-call"><div style="display:flex;justify-content:space-between;align-items:center"><span class="tab" style="color:var(--ink)">Emergency Fund</span><span class="tagw">VULNERABLE</span></div><div class="big num">' + inr(d.emergency.have) + '</div><div class="track"><i style="width:' + d.emergency.pct + '%"></i></div><div class="s" style="font-size:11.5px;color:var(--ink-soft);margin-top:8px">' + d.emergency.pct + '% of a 6× buffer — ' + shortInr(d.emergency.short) + ' short.</div></div>' +
+      (d.cards && d.cards.list && d.cards.list.length ? '<div class="colhead" style="margin-top:22px">Credit cards <span class="more num">' + d.cards.blended + '%</span></div>' + d.cards.list.slice(0, 6).map(function (c) { var hot = c.pct >= 30; return '<div class="ab"><span class="nm">' + esc(c.name) + '</span><span class="track"><i style="width:' + Math.min(100, c.pct) + '%;background:' + (hot ? "var(--neg)" : "var(--accent)") + '"></i></span><span class="pc num ' + (hot ? "neg" : "") + '">' + c.pct + '%</span></div>'; }).join("") : "") + '</div>' +
       '<div class="w-col last"><div class="colhead">Coming up · 14 days <span class="more">All</span></div><div class="w-tbl">' +
       d.upcoming.slice(0, 4).map(function (u) { return '<div class="tr"><span class="dt num">' + esc(u.date) + '</span><span class="nm">' + esc(u.name) + ' · ' + esc(u.acct.split(" ")[0]) + '</span><span class="amt neg num">−' + inr(Math.abs(u.amt)) + '</span></div>'; }).join("") +
       '</div><div class="colhead" style="margin-top:22px">Intelligence</div><p style="font-family:\'Fraunces\',serif;font-size:16px;font-weight:500;line-height:1.3;margin-bottom:8px">' + esc(d.predict.brief.head) + '</p><p style="font-size:12.5px;color:var(--ink-soft);line-height:1.55">' + d.predict.brief.body.replace(/<[^>]+>/g, "") + '</p></div>' +
@@ -589,7 +604,7 @@
       }).join("") + '</div>';
     var trackGrid = '<div class="w-trio" style="margin:14px 0">' + strip + '</div>' +
       '<div class="w-grid" style="grid-template-columns:1fr 1.2fr">' +
-      '<div class="w-col lead"><div class="colhead">Category budgets <span class="more">' + (p === "month" ? "Edit caps" : "month") + '</span></div>' + (caps || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No caps set yet.</div>') +
+      '<div class="w-col lead"><div class="colhead">Category budgets <span class="more"' + (p === "month" ? ' data-act="editCaps"' : "") + '>' + (p === "month" ? "Edit caps" : "month") + '</span></div>' + (caps || '<div class="s" style="padding:12px 0;color:var(--ink-soft)">No caps set yet.</div>') +
       (p === "month" && m.alert ? '<div class="w-call" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Over cap</span><div class="s" style="font-size:12px;color:var(--ink);margin-top:6px">' + esc(m.alert) + '</div></div>' : "") + '</div>' +
       '<div class="w-col"><div class="colhead">Transactions · ' + p + ' <span class="more">' + flist.length + '</span></div>' + searchBox() + '<div class="w-tbl">' + rows + '</div></div>' +
       '</div>';
@@ -651,6 +666,24 @@
       '</div></div></div>';
   }
 
+  function capsModal() {
+    var caps = state.data.month.cats || [];
+    var rows = caps.map(function (c, i) {
+      return '<div class="ureview" style="padding:12px 0"><div class="top"><span class="n">' + esc(c.name) + '</span>' +
+        '<span style="display:flex;align-items:center;gap:10px"><input class="capinput" data-capname="' + esc(c.name) + '" type="number" min="0" value="' + c.cap + '" style="width:110px;padding:8px 10px;border:1px solid var(--rule);background:var(--paper-2);color:var(--ink);border-radius:4px;font:inherit;text-align:right">' +
+        '<button class="lx" data-delcap="' + esc(c.name) + '" style="color:var(--neg)">✕</button></span></div></div>';
+    }).join("");
+    var catOpts = ["Rent", "EMI / Loan", "Bills & utilities", "Subscriptions", "Eating out", "Groceries", "Transport", "Shopping", "Entertainment", "Health", "Other"].map(function (c) { return '<option>' + esc(c) + '</option>'; }).join("");
+    return '<div class="modal"><button class="backdrop" data-act="closeCaps" aria-label="Close"></button><div class="sheet">' +
+      '<div class="mhead"><h2>Category budgets</h2><button class="x" data-act="closeCaps" aria-label="Close">✕</button></div>' +
+      '<div class="psub" style="padding:2px 0 6px">Set a monthly cap per category. Bling warns when you cross it and factors it into "safe to spend".</div>' +
+      '<form data-form="caps">' + rows +
+      '<div class="sec"><span class="tab">Add a category</span></div>' +
+      '<div style="display:flex;gap:8px;align-items:flex-end"><label class="field" style="flex:1;margin-top:0"><span>Category</span><select name="newname">' + catOpts + '</select></label>' +
+      '<label class="field" style="width:130px;margin-top:0"><span>Cap ₹</span><input name="newcap" type="number" min="0" placeholder="0"></label></div>' +
+      '<button class="btn" type="submit" style="margin-top:18px">Save budgets</button>' +
+      '</form></div></div>';
+  }
   function fixedModal() {
     var accs = state.data.accountsList || [];
     var F = state.editFixedId ? (state.data.fixed || []).filter(function (x) { return String(x.id) === String(state.editFixedId); })[0] : null;
@@ -735,7 +768,7 @@
     var app = document.getElementById("app");
     app.innerHTML = phoneShell(state.data) + webShell(state.data) +
       '<button class="fab" data-act="add" aria-label="Add entry">+</button>' +
-      (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "") + (state.editId ? editModal() : "") + (state.addingLiab ? liabModal() : "") + (state.addingFixed ? fixedModal() : "");
+      (state.reviewing ? reviewModal() : "") + (state.adding ? addModal() : "") + (state.editId ? editModal() : "") + (state.addingLiab ? liabModal() : "") + (state.addingFixed ? fixedModal() : "") + (state.editingCaps ? capsModal() : "");
     if (state._focusSearch) {
       var pool = document.querySelector(".modal") ? document.querySelectorAll(".modal .txnsearch") : document.querySelectorAll(".txnsearch");
       var s = [].slice.call(pool).filter(function (i) { return i.offsetParent; })[0];
@@ -819,7 +852,7 @@
   }
 
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby],[data-editliab],[data-payemi],[data-wsm],[data-editfixed]");
+    var t = e.target.closest("[data-go],[data-act],[data-mode],[data-period],[data-wperiod],[data-wgo],[data-theme-set],[data-cat],[data-tedit],[data-trend],[data-groupby],[data-editliab],[data-payemi],[data-wsm],[data-editfixed],[data-delcap]");
     if (!t) return;
     if (t.dataset.go) { state.screen = t.dataset.go; render(); }
     else if (t.dataset.wgo) { state.wboard = t.dataset.wgo; render(); }
@@ -860,6 +893,9 @@
     else if (t.dataset.editfixed) { state.editFixedId = t.dataset.editfixed; state.addingFixed = true; render(); }
     else if (t.dataset.act === "deleteFixed") { deleteFixed(); }
     else if (t.dataset.act === "briefing") { doBriefing(); }
+    else if (t.dataset.act === "editCaps") { state.editingCaps = true; render(); }
+    else if (t.dataset.act === "closeCaps") { state.editingCaps = false; render(); }
+    else if (t.dataset.delcap) { delCap(t.dataset.delcap); }
   });
 
   function payEmi(id) {
@@ -903,6 +939,20 @@
     if (!connected()) { render(); toast("Removed (demo)"); return; }
     render(); toast("Removing…");
     api("delete_recurring", { id: id }).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
+  function saveCaps(f) {
+    var inputs = [].slice.call(f.querySelectorAll(".capinput"));
+    var newName = f.querySelector('[name=newname]'), newCap = f.querySelector('[name=newcap]');
+    state.editingCaps = false;
+    if (!connected()) { render(); toast("Saved (demo — connect to save)"); return; }
+    render(); toast("Saving budgets…");
+    var calls = inputs.map(function (i) { return api("set_budget_cap", { name: i.dataset.capname, cap: Number(i.value) || 0 }); });
+    if (newName && newCap && Number(newCap.value) > 0) calls.push(api("set_budget_cap", { name: newName.value, cap: Number(newCap.value) }));
+    Promise.all(calls).then(function () { loadLive(true); }).catch(function (e) { toast("Failed: " + e.message); });
+  }
+  function delCap(name) {
+    if (!connected()) { toast("Connect to save"); return; }
+    api("delete_budget", { name: name }).then(function () { loadLive(false); toast("Removed " + name); }).catch(function (e) { toast("Failed: " + e.message); });
   }
   function doBriefing() {
     if (!connected()) { needSheet(); return; }
@@ -1038,6 +1088,8 @@
     if (ff) { e.preventDefault(); saveFixed(ff); return; }
     var gq = e.target.closest('form[data-form=gmailq]');
     if (gq) { e.preventDefault(); if (!connected()) return needSheet(); var q = new FormData(gq).get("q"); api("set_gmail_query", { value: q }).then(function () { toast("Gmail label saved"); }).catch(function (e2) { toast("Failed: " + e2.message); }); return; }
+    var cf = e.target.closest('form[data-form=caps]');
+    if (cf) { e.preventDefault(); saveCaps(cf); return; }
     var gk = e.target.closest('form[data-form=gemkey]');
     if (gk) { e.preventDefault(); if (!connected()) return needSheet(); var k = new FormData(gk).get("key"); if (!k) { toast("Paste a key"); return; } api("set_config", { key: "gemini_key", value: k }).then(function () { loadLive(true); toast("Gemini key saved"); }).catch(function (e2) { toast("Failed: " + e2.message); }); return; }
     var f = e.target.closest('form[data-form=conn]');
