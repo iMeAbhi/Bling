@@ -543,6 +543,11 @@
       '<div class="sec"><span class="tab">AI briefing (Gemini)</span><span class="more">' + (c.geminiSet ? "key set" : "not set") + '</span></div>' +
       '<form data-form="gemkey"><label class="field"><span>Gemini API key</span><input name="key" type="password" placeholder="' + (c.geminiSet ? "•••••••• (saved)" : "AIza…") + '"></label><button class="btn" type="submit" style="margin-top:10px">Save key</button></form>' +
       '<div class="flow">Get a free key at aistudio.google.com/apikey. Stored in your Sheet only; powers the Predict → Generate briefing button.</div>' +
+      '<div class="sec"><span class="tab">Daily reminder</span><span class="more">' + (c.digestEnabled ? "on" : "off") + '</span></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="btn ghost" data-act="' + (c.digestEnabled ? "digestOff" : "digestOn") + '">' + (c.digestEnabled ? "Turn off" : "Turn on ~8am email") + '</button>' +
+      '<button class="btn ghost" data-act="digestTest">Send test now</button></div>' +
+      '<div class="flow">A morning email with what\'s due in the next few days, budget warnings and safe-to-spend. Sent to your Google account.</div>' +
       '<div class="sec"><span class="tab">Data cleanup</span></div>' +
       '<button class="btn ghost" data-act="cleanup">Remove orphaned recurring/loans</button>' +
       '<div class="flow">Deactivates any recurring or loan that points at an account which no longer exists (e.g. leftover sample data). Safe — only touches orphans.</div>';
@@ -899,6 +904,9 @@
     else if (t.dataset.act === "scan") { doScan(); }
     else if (t.dataset.act === "installGmail") { if (!connected()) return needSheet(); toast("Installing…"); api("install_gmail").then(function () { loadLive(true); toast("Gmail sync installed"); }).catch(function (e) { toast("Failed: " + e.message); }); }
     else if (t.dataset.act === "cleanup") { if (!connected()) return needSheet(); toast("Cleaning…"); api("cleanup_orphans").then(function (r) { loadLive(true); toast("Removed " + (r ? r.removed : 0) + " orphaned"); }).catch(function (e) { toast("Failed: " + e.message); }); }
+    else if (t.dataset.act === "digestOn") { if (!connected()) return needSheet(); toast("Enabling…"); api("install_digest").then(function () { loadLive(true); toast("Daily reminder on"); }).catch(function (e) { toast("Failed: " + e.message); }); }
+    else if (t.dataset.act === "digestOff") { if (!connected()) return needSheet(); api("uninstall_digest").then(function () { loadLive(true); toast("Daily reminder off"); }).catch(function (e) { toast("Failed: " + e.message); }); }
+    else if (t.dataset.act === "digestTest") { if (!connected()) return needSheet(); toast("Sending…"); api("send_digest").then(function (r) { toast(r && r.sent ? "Sent to " + r.to : "Not sent: " + ((r && (r.reason || r.error)) || "")); }).catch(function (e) { toast("Failed: " + e.message); }); }
     else if (t.dataset.act === "monthPrev") { state.monthOffset -= 1; render(); }
     else if (t.dataset.act === "monthNext") { if (state.monthOffset < 0) { state.monthOffset += 1; render(); } }
     else if (t.dataset.act === "review") { state.reviewing = true; state.txnQuery = ""; render(); }

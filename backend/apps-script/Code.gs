@@ -58,6 +58,8 @@ function onOpen() {
     .addItem("Install 15-min Gmail sync", "installGmailSync")
     .addItem("Sync Gmail now", "syncGmailAlerts")
     .addItem("Load bank SMS rules", "seedBankRules")
+    .addItem("Email me a digest now", "sendDigestNow")
+    .addItem("Install daily reminder", "installDigest")
     .addSeparator()
     .addItem("Auto-categorise transactions", "autoCategorize")
     .addSeparator()
@@ -143,6 +145,9 @@ function doPost(e) {
         case "delete_recurring": return json_({ ok: true, data: deleteRecurring_(payload.id) });
         case "gemini_briefing": return json_({ ok: true, data: geminiBriefing_() });
         case "cleanup_orphans": return json_({ ok: true, data: cleanupOrphans_() });
+        case "send_digest": return json_({ ok: true, data: sendDigest_({ test: true }) });
+        case "install_digest": return json_({ ok: true, data: installDigest_() });
+        case "uninstall_digest": return json_({ ok: true, data: uninstallDigest_() });
         case "set_config": {
           var allow = { gemini_key: 1, gemini_model: 1, gmail_query: 1, monthly_budget: 1, takehome: 1, safety_buffer: 1 };
           if (!allow[payload.key]) throw new Error("config key not allowed");
@@ -336,7 +341,8 @@ function buildSnapshot_() {
       smsToken: getConfig_("sms_webhook_token"),
       gmailQuery: getConfig_("gmail_query"),
       gmailInstalled: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === "syncGmailAlerts"; }),
-      geminiSet: !!getConfig_("gemini_key")
+      geminiSet: !!getConfig_("gemini_key"),
+      digestEnabled: !!getConfig_("digest_enabled")
     }
   };
 }
@@ -827,6 +833,45 @@ function seedRealParserRules_() {
     added++;
   });
   return added;
+}
+/* =================================================================
+   Daily reminder digest (email) — dues/EMIs soon + safe-to-spend
+   ================================================================= */
+function sendDigestNow() { ensureInstalled_(); var r = sendDigest_({ test: true }); SpreadsheetApp.getActiveSpreadsheet().toast(r.sent ? "Digest sent to " + r.to : "Not sent: " + (r.reason || r.error), "Bling", 6); }
+function installDigest() { ensureInstalled_(); var r = installDigest_(); SpreadsheetApp.getActiveSpreadsheet().toast("Daily reminder at ~" + r.hour + ":00.", "Bling", 5); }
+function dailyDigest() { ensureInstalled_(); sendDigest_({ test: false }); }
+function installDigest_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === "dailyDigest") ScriptApp.deleteTrigger(t); });
+  var h = num_(getConfig_("digest_hour")) || 8;
+  ScriptApp.newTrigger("dailyDigest").timeBased().everyDays(1).atHour(h).create();
+  setConfig_("digest_enabled", "true");
+  return { installed: true, hour: h };
+}
+function uninstallDigest_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === "dailyDigest") ScriptApp.deleteTrigger(t); });
+  setConfig_("digest_enabled", "");
+  return { installed: false };
+}
+function sendDigest_(opts) {
+  opts = opts || {};
+  var email = Session.getEffectiveUser().getEmail();
+  if (!email) return { sent: false, error: "no email on this account" };
+  var s = buildSnapshot_(), tz = Session.getScriptTimeZone();
+  var today = Number(Utilities.formatDate(new Date(), tz, "d")), dim = daysInMonth_(tz);
+  var win = num_(getConfig_("digest_days")) || 5;
+  var due = (s.upcoming || []).map(function (u) { var d = Number(u.day) - today; if (d < 0) d += dim; return { name: u.name, amt: u.amt, acct: u.acct, inDays: d }; })
+    .filter(function (u) { return u.inDays <= win; }).sort(function (a, b) { return a.inDays - b.inDays; });
+  if (!due.length && !opts.test) { setConfig_("digest_last_run", nowIso_()); return { sent: false, reason: "nothing due within " + win + " days" }; }
+  var L = ["Safe to spend today: " + inrPlain_(s.answers.safeToday), ""];
+  if (due.length) { L.push("Coming up:"); due.forEach(function (u) { L.push("  • " + u.name + " — " + inrPlain_(Math.abs(u.amt)) + " " + (u.inDays === 0 ? "today" : "in " + u.inDays + "d") + (u.acct ? " (" + u.acct + ")" : "")); }); L.push(""); }
+  else { L.push("Nothing due in the next " + win + " days.", ""); }
+  if (s.month.alert) L.push("Budget: " + s.month.alert, "");
+  L.push("Net worth " + inrPlain_(s.netWorth) + " · spent this month " + inrPlain_(s.month.spent) + " of " + inrPlain_(s.month.budget) + ".");
+  var total = due.reduce(function (t, u) { return t + Math.abs(u.amt); }, 0);
+  var subj = "Bling — " + (due.length ? inrPlain_(total) + " due in " + win + " days" : "your money today");
+  MailApp.sendEmail(email, subj, L.join("\n"));
+  setConfig_("digest_last_run", nowIso_());
+  return { sent: true, to: email, items: due.length };
 }
 function findAccountByLast4_(last4) { if (!last4) return null; return readObjects_("Accounts").find(function (a) { return truthy_(a.active) && String(a.last4) === String(last4); }) || null; }
 function safeTest_(pattern, value) { if (!pattern) return true; if (String(pattern).length > 1000) throw new Error("pattern too long"); return new RegExp(String(pattern), "i").test(String(value)); }
