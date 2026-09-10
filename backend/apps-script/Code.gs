@@ -130,6 +130,7 @@ function doPost(e) {
         case "settle_recurring": return json_({ ok: true, data: settleRecurring_(payload.id) });
         case "delete_recurring": return json_({ ok: true, data: deleteRecurring_(payload.id) });
         case "gemini_briefing": return json_({ ok: true, data: geminiBriefing_() });
+        case "cleanup_orphans": return json_({ ok: true, data: cleanupOrphans_() });
         case "set_config": {
           var allow = { gemini_key: 1, gemini_model: 1, gmail_query: 1, monthly_budget: 1, takehome: 1, safety_buffer: 1 };
           if (!allow[payload.key]) throw new Error("config key not allowed");
@@ -608,6 +609,22 @@ function setBudgetCap_(p) {
 }
 function settleRecurring_(id) { var f = requireObject_("Recurring", "id", id); writeObjectAt_("Recurring", f.rowIndex, Object.assign({}, f.object, { settled_month: dateKey_(nowIso_(), Session.getScriptTimeZone(), "yyyy-MM"), updated_at: nowIso_() })); return { id: id, settled: true }; }
 function deleteRecurring_(id) { var f = requireObject_("Recurring", "id", id); writeObjectAt_("Recurring", f.rowIndex, Object.assign({}, f.object, { active: false, updated_at: nowIso_() })); return { id: id, deleted: true }; }
+/* Deactivate recurring/liabilities that point at accounts which no longer exist
+   (e.g. leftover seedDemo rows referencing acc_hdfc). Safe: only touches orphans. */
+function cleanupOrphans_() {
+  var ids = {}; readObjects_("Accounts").forEach(function (a) { ids[String(a.id)] = true; });
+  var n = 0;
+  readObjects_("Recurring").forEach(function (r, i) {
+    if (!truthy_(r.active)) return;
+    if (r.account_id && !ids[String(r.account_id)]) { writeObjectAt_("Recurring", i + 2, Object.assign({}, r, { active: false, updated_at: nowIso_() })); n++; }
+  });
+  readObjects_("Liabilities").forEach(function (l, i) {
+    if (!truthy_(l.active)) return;
+    var bad = (l.account_id && !ids[String(l.account_id)]) || (l.pay_from_id && !ids[String(l.pay_from_id)]);
+    if (bad) { writeObjectAt_("Liabilities", i + 2, Object.assign({}, l, { active: false, updated_at: nowIso_() })); n++; }
+  });
+  return { removed: n };
+}
 /* Gemini on-demand briefing from the live snapshot (needs the user's own key) */
 function geminiBriefing_() {
   var key = getConfig_("gemini_key");

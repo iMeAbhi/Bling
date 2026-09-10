@@ -498,9 +498,10 @@
     var hold = iv.holdings.map(function (h) {
       return '<div class="ans"><div class="l"><div class="t">' + esc(h.name) + '</div><div class="s ' + h.retCls + '">' + esc(h.ret) + '</div></div><div class="dotlead"></div><div class="k serif num">' + shortInr(h.val) + '</div></div>';
     }).join("");
-    return '<section class="screen" data-s="invest"><div class="h1">Invest</div><div class="psub">Across 5 asset classes</div>' +
-      '<div class="hero" style="padding-top:16px"><span class="tab">Portfolio Value</span><div class="nw sm serif num">' + inr(iv.value) + '</div>' +
-      '<div class="delta pos num"><span class="serif">↑</span> ' + inr(iv.gain) + ' · XIRR ' + iv.xirr + '%</div></div>' +
+    var perf = iv.xirr ? '<div class="delta pos num"><span class="serif">↑</span> ' + inr(iv.gain) + ' · XIRR ' + iv.xirr + '%</div>'
+      : '<div class="psub" style="padding-top:6px">Value entered manually · add invested amount & returns to see XIRR</div>';
+    return '<section class="screen" data-s="invest"><div class="h1">Invest</div><div class="psub">Your holdings</div>' +
+      '<div class="hero" style="padding-top:16px"><span class="tab">Portfolio Value</span><div class="nw sm serif num">' + inr(iv.value) + '</div>' + perf + '</div>' +
       '<div class="sec"><span class="tab">Holdings</span></div>' + hold +
       '<div class="callout" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Concentration</span><div class="s" style="margin-top:8px;color:var(--ink)">' + esc(iv.concentration) + '</div></div></section>';
   }
@@ -530,7 +531,10 @@
       '<div class="flow">In Tasker/MacroDroid, on a bank SMS, POST to your Apps Script URL: <code>{"action":"ingest_sms","token":"…","payload":{"text":"[sms]","sender":"[from]"}}</code></div>' +
       '<div class="sec"><span class="tab">AI briefing (Gemini)</span><span class="more">' + (c.geminiSet ? "key set" : "not set") + '</span></div>' +
       '<form data-form="gemkey"><label class="field"><span>Gemini API key</span><input name="key" type="password" placeholder="' + (c.geminiSet ? "•••••••• (saved)" : "AIza…") + '"></label><button class="btn" type="submit" style="margin-top:10px">Save key</button></form>' +
-      '<div class="flow">Get a free key at aistudio.google.com/apikey. Stored in your Sheet only; powers the Predict → Generate briefing button.</div>';
+      '<div class="flow">Get a free key at aistudio.google.com/apikey. Stored in your Sheet only; powers the Predict → Generate briefing button.</div>' +
+      '<div class="sec"><span class="tab">Data cleanup</span></div>' +
+      '<button class="btn ghost" data-act="cleanup">Remove orphaned recurring/loans</button>' +
+      '<div class="flow">Deactivates any recurring or loan that points at an account which no longer exists (e.g. leftover sample data). Safe — only touches orphans.</div>';
   }
   function scYou(d) {
     var c = state.connection, connected = c.endpoint && c.token;
@@ -621,7 +625,7 @@
   function wbInvest(d) {
     var iv = d.invest;
     return '<div class="wboard' + (state.wboard === "invest" ? " on" : "") + '" data-b="invest"><div class="w-grid">' +
-      '<div class="w-col lead"><div class="lede-lbl">Portfolio · Total Value</div><div class="w-nw sm serif num">' + inr(iv.value) + '</div><div class="w-delta pos num"><span class="serif">↑</span> ' + inr(iv.gain) + ' all-time · XIRR ' + iv.xirr + '% · CAGR ' + iv.cagr + '%</div>' +
+      '<div class="w-col lead"><div class="lede-lbl">Portfolio · Total Value</div><div class="w-nw sm serif num">' + inr(iv.value) + '</div>' + (iv.xirr ? '<div class="w-delta pos num"><span class="serif">↑</span> ' + inr(iv.gain) + ' all-time · XIRR ' + iv.xirr + '% · CAGR ' + iv.cagr + '%</div>' : '<div class="s" style="color:var(--ink-soft);margin-top:6px">Value entered manually · add invested & returns for XIRR</div>') +
       '<div class="colhead" style="margin-top:22px">Holdings</div><div class="w-tbl">' + iv.holdings.map(function (h) { return '<div class="tr"><span class="nm">' + esc(h.name) + '</span><span style="width:80px" class="' + h.retCls + ' num">' + esc(h.ret) + '</span><span class="amt num" style="width:90px;text-align:right">' + shortInr(h.val) + '</span></div>'; }).join("") + '</div></div>' +
       '<div class="w-col"><div class="colhead">Allocation</div>' + allocBars(d.allocation) + '<div class="w-call" style="border-left-color:var(--neg)"><span class="tab" style="color:var(--ink)">Concentration</span><div class="s" style="font-size:12px;color:var(--ink);margin-top:6px">' + esc(iv.concentration) + '</div></div></div>' +
       '<div class="w-col last"><div class="colhead">Performance</div>' + ansWeb("Invested", "", shortInr(iv.invested)) + ansWeb("Returns", "since 2021", shortInr(iv.returns), "pos") + ansWeb("This FY gain", "", shortInr(iv.fyGain), "pos") + '</div>' +
@@ -870,6 +874,7 @@
     else if (t.dataset.act === "usecap") { doUseCap(Number(t.dataset.idx)); }
     else if (t.dataset.act === "scan") { doScan(); }
     else if (t.dataset.act === "installGmail") { if (!connected()) return needSheet(); toast("Installing…"); api("install_gmail").then(function () { loadLive(true); toast("Gmail sync installed"); }).catch(function (e) { toast("Failed: " + e.message); }); }
+    else if (t.dataset.act === "cleanup") { if (!connected()) return needSheet(); toast("Cleaning…"); api("cleanup_orphans").then(function (r) { loadLive(true); toast("Removed " + (r ? r.removed : 0) + " orphaned"); }).catch(function (e) { toast("Failed: " + e.message); }); }
     else if (t.dataset.act === "monthPrev") { state.monthOffset -= 1; render(); }
     else if (t.dataset.act === "monthNext") { if (state.monthOffset < 0) { state.monthOffset += 1; render(); } }
     else if (t.dataset.act === "review") { state.reviewing = true; state.txnQuery = ""; render(); }
